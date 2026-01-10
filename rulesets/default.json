@@ -1,12 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/github-ruleset.json",
-  "name": "default",
+  "name": "main-protection",
   "target": "branch",
   "source_type": "Repository",
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["~DEFAULT_BRANCH"]
+      "include": ["~DEFAULT_BRANCH"],
+      "exclude": []
     }
   },
   "rules": [
@@ -17,7 +18,9 @@
       "parameters": {
         "required_approving_review_count": 0,
         "dismiss_stale_reviews_on_push": true,
-        "allowed_merge_methods": ["squash"]
+        "require_last_push_approval": false,
+        "require_code_owner_review": false,
+        "required_review_thread_resolution": false
       }
     }
   ],
