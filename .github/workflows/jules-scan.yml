@@ -1,0 +1,175 @@
+name: Jules Security & Tech Debt Scan
+
+on:
+  workflow_call:
+    inputs:
+      scan-type:
+        description: 'Type of scan: security, tech-debt, or both'
+        required: false
+        default: 'both'
+        type: string
+    secrets:
+      JULES_API_KEY:
+        required: true
+      PROJECT_TOKEN:
+        required: true
+
+jobs:
+  security-scan:
+    if: inputs.scan-type == 'security' || inputs.scan-type == 'both'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Jules Security Analysis
+        id: jules-security
+        uses: google-labs-code/jules-invoke@v1
+        with:
+          prompt: |
+            You are a security auditor. Analyze this codebase for:
+            1. Hardcoded secrets, API keys, or credentials
+            2. SQL injection or command injection vulnerabilities
+            3. XSS vulnerabilities in any frontend code
+            4. Insecure dependencies or outdated packages with CVEs
+            5. Authentication/authorization weaknesses
+            6. Insecure cryptographic practices
+
+            For each finding, provide:
+            - Severity (Critical/High/Medium/Low)
+            - File path and line number
+            - Description of the vulnerability
+            - Recommended fix
+
+            Output as structured markdown with ## headers per finding.
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          require_plan_approval: false
+
+      - name: Create/Update Security Issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const ISSUE_TITLE = '[Jules] Security Scan Findings';
+
+            // Find existing issue
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'source:jules',
+              state: 'open'
+            });
+
+            const existingIssue = issues.find(i => i.title === ISSUE_TITLE);
+            const findings = `${{ steps.jules-security.outputs.response }}`;
+            const timestamp = new Date().toISOString().split('T')[0];
+
+            const body = `## Security Scan Results - ${timestamp}
+
+            ${findings}
+
+            ---
+            *Automated scan by [Google Jules](https://jules.google). Last run: ${timestamp}*
+            `;
+
+            if (existingIssue) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: body
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: `Scan updated on ${timestamp}. See issue body for latest findings.`
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: ISSUE_TITLE,
+                body: body,
+                labels: ['source:jules', 'type:chore', 'status:triage']
+              });
+            }
+
+  tech-debt-scan:
+    if: inputs.scan-type == 'tech-debt' || inputs.scan-type == 'both'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Jules Tech Debt Analysis
+        id: jules-techdebt
+        uses: google-labs-code/jules-invoke@v1
+        with:
+          prompt: |
+            You are a code quality analyst. Analyze this codebase for:
+            1. TODO/FIXME/HACK comments that need attention
+            2. Duplicate code patterns (DRY violations)
+            3. Dead code or unused exports
+            4. Functions exceeding 50 lines (complexity)
+            5. Missing error handling
+            6. Outdated patterns that should be modernized
+
+            For each finding, provide:
+            - Priority (High/Medium/Low)
+            - File path and line number
+            - Description of the issue
+            - Suggested improvement
+
+            Output as structured markdown with ## headers per finding.
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          require_plan_approval: false
+
+      - name: Create/Update Tech Debt Issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const ISSUE_TITLE = '[Jules] Tech Debt Findings';
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'source:jules',
+              state: 'open'
+            });
+
+            const existingIssue = issues.find(i => i.title === ISSUE_TITLE);
+            const findings = `${{ steps.jules-techdebt.outputs.response }}`;
+            const timestamp = new Date().toISOString().split('T')[0];
+
+            const body = `## Tech Debt Scan Results - ${timestamp}
+
+            ${findings}
+
+            ---
+            *Automated scan by [Google Jules](https://jules.google). Last run: ${timestamp}*
+            `;
+
+            if (existingIssue) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: body
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: `Scan updated on ${timestamp}. See issue body for latest findings.`
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: ISSUE_TITLE,
+                body: body,
+                labels: ['source:jules', 'type:chore', 'status:triage']
+              });
+            }
