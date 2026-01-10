@@ -48,3 +48,8 @@
 - name: "priority:low"
   color: "0e8a16"
   description: "Nice to have"
+
+# Source Labels - Where did this issue come from?
+- name: "source:jules"
+  color: "7C3AED"
+  description: "Automated finding from Jules scan"
