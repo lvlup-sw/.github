@@ -1,0 +1,12 @@
+# Line ending normalization
+* text=auto
+
+# Shell scripts always use LF
+*.sh text eol=lf
+
+# YAML files always use LF (required for GitHub Actions)
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Markdown always use LF
+*.md text eol=lf
