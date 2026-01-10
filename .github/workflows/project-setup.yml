@@ -153,7 +153,7 @@ jobs:
                 echo "Adding issue $node_id to project..."
                 gh api graphql -f query='
                   mutation($projectId: ID!, $contentId: ID!) {
-                    addProjectV2ItemByContentId(input: {
+                    addProjectV2ItemById(input: {
                       projectId: $projectId
                       contentId: $contentId
                     }) {
