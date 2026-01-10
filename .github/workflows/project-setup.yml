@@ -166,6 +166,167 @@ jobs:
             echo "Completed $repo"
           done
 
+      - name: Set priorities based on labels
+        if: ${{ inputs.sync_existing_issues }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          echo "Setting priorities based on issue labels..."
+
+          PROJECT_ID="${{ steps.project.outputs.project_id }}"
+
+          # Get Priority field options
+          PRIORITY_DATA=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  field(name: "Priority") {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      options { id name }
+                    }
+                  }
+                }
+              }
+            }' -f projectId="$PROJECT_ID")
+
+          PRIORITY_FIELD_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.id')
+          P0_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P0") | .id')
+          P1_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P1") | .id')
+          P2_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P2") | .id')
+          P3_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P3") | .id')
+
+          echo "Priority field: $PRIORITY_FIELD_ID"
+          echo "P0=$P0_ID, P1=$P1_ID, P2=$P2_ID, P3=$P3_ID"
+
+          # Get Iteration field and current iteration
+          ITER_DATA=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2IterationField {
+                        id
+                        name
+                        configuration {
+                          iterations { id title startDate duration }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f projectId="$PROJECT_ID")
+
+          ITER_FIELD_ID=$(echo "$ITER_DATA" | jq -r '.data.node.fields.nodes[] | select(.name == "Sprint" or .name == "Iteration") | .id' | head -1)
+
+          # Find current iteration (if any)
+          NOW=$(date +%s)
+          CURRENT_ITER_ID=""
+          if [ -n "$ITER_FIELD_ID" ]; then
+            CURRENT_ITER_ID=$(echo "$ITER_DATA" | jq -r --argjson now "$NOW" '
+              .data.node.fields.nodes[]
+              | select(.name == "Sprint" or .name == "Iteration")
+              | .configuration.iterations[]
+              | select(
+                  ($now >= ((.startDate | strptime("%Y-%m-%d") | mktime))) and
+                  ($now < ((.startDate | strptime("%Y-%m-%d") | mktime) + (.duration * 7 * 86400)))
+                )
+              | .id' 2>/dev/null | head -1)
+          fi
+          echo "Iteration field: $ITER_FIELD_ID, Current iteration: $CURRENT_ITER_ID"
+
+          # Get all project items
+          ITEMS=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  items(first: 100) {
+                    nodes {
+                      id
+                      content {
+                        ... on Issue {
+                          id
+                          title
+                          body
+                          labels(first: 10) {
+                            nodes { name }
+                          }
+                        }
+                        ... on PullRequest {
+                          id
+                          title
+                          body
+                          labels(first: 10) {
+                            nodes { name }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f projectId="$PROJECT_ID")
+
+          # Process each item
+          echo "$ITEMS" | jq -c '.data.node.items.nodes[]' | while read -r item; do
+            ITEM_ID=$(echo "$item" | jq -r '.id')
+            LABELS=$(echo "$item" | jq -r '[.content.labels.nodes[].name] | join(",")')
+            BODY=$(echo "$item" | jq -r '.content.body // ""' | tr '[:upper:]' '[:lower:]')
+            TITLE=$(echo "$item" | jq -r '.content.title // ""')
+
+            echo "Processing: $TITLE (labels: $LABELS)"
+
+            # Determine priority
+            PRIORITY_ID="$P2_ID"  # Default
+            IS_HIGH=false
+
+            if echo "$LABELS" | grep -q "priority:high"; then
+              IS_HIGH=true
+              # Check for urgent keywords
+              if echo "$BODY" | grep -qE "urgent|critical|blocker|p0|asap|emergency"; then
+                PRIORITY_ID="$P0_ID"
+                echo "  -> P0 (high + urgent)"
+              else
+                PRIORITY_ID="$P1_ID"
+                echo "  -> P1 (high)"
+              fi
+            elif echo "$LABELS" | grep -q "priority:low"; then
+              PRIORITY_ID="$P3_ID"
+              echo "  -> P3 (low)"
+            else
+              echo "  -> P2 (default)"
+            fi
+
+            # Set priority
+            gh api graphql -f query='
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $value }
+                }) { projectV2Item { id } }
+              }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$PRIORITY_FIELD_ID" -f value="$PRIORITY_ID" >/dev/null
+
+            # Set iteration for high priority items
+            if [ "$IS_HIGH" = true ] && [ -n "$CURRENT_ITER_ID" ] && [ -n "$ITER_FIELD_ID" ]; then
+              echo "  -> Assigning to current iteration"
+              gh api graphql -f query='
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId
+                    itemId: $itemId
+                    fieldId: $fieldId
+                    value: { iterationId: $value }
+                  }) { projectV2Item { id } }
+                }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$ITER_FIELD_ID" -f value="$CURRENT_ITER_ID" >/dev/null
+            fi
+          done
+
+          echo "Priority assignment complete!"
+
       - name: Summary
         run: |
           echo "## Project Setup Complete" >> $GITHUB_STEP_SUMMARY
@@ -174,7 +335,10 @@ jobs:
           echo "- **Priority Field**: ${{ steps.priority.outputs.field_id || 'Created' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Iteration Field**: ${{ steps.iteration.outputs.field_id || 'Needs manual creation' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "1. If Iteration field was not created, add it manually in Project settings" >> $GITHUB_STEP_SUMMARY
-          echo "2. Create initial iterations (2-week sprints)" >> $GITHUB_STEP_SUMMARY
-          echo "3. Set up project views with Priority sorting" >> $GITHUB_STEP_SUMMARY
+          echo "### Priority Mapping" >> $GITHUB_STEP_SUMMARY
+          echo "| Label | Priority |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| priority:high + urgent keywords | P0 |" >> $GITHUB_STEP_SUMMARY
+          echo "| priority:high | P1 |" >> $GITHUB_STEP_SUMMARY
+          echo "| (no priority label) | P2 |" >> $GITHUB_STEP_SUMMARY
+          echo "| priority:low | P3 |" >> $GITHUB_STEP_SUMMARY
