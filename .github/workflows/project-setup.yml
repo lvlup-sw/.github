@@ -144,11 +144,11 @@ jobs:
           for repo in "${REPO_ARRAY[@]}"; do
             echo "Processing $repo..."
 
-            # Get all open issues
-            ISSUES=$(gh issue list --repo "$ORG/$repo" --state open --json number,nodeId --limit 100)
+            # Get all open issues (id is the GraphQL node ID)
+            ISSUES=$(gh issue list --repo "$ORG/$repo" --state open --json number,id --limit 100)
 
             # Add each issue to project
-            echo "$ISSUES" | jq -r '.[].nodeId' | while read -r node_id; do
+            echo "$ISSUES" | jq -r '.[].id' | while read -r node_id; do
               if [ -n "$node_id" ]; then
                 echo "Adding issue $node_id to project..."
                 gh api graphql -f query='
