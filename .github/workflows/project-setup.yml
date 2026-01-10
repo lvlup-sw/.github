@@ -191,13 +191,50 @@ jobs:
             }' -f projectId="$PROJECT_ID")
 
           PRIORITY_FIELD_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.id')
-          P0_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P0") | .id')
-          P1_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P1") | .id')
-          P2_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P2") | .id')
-          P3_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P3") | .id')
+
+          # Get available options (field may not have all P0-P3)
+          echo "Available priority options:"
+          echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | "\(.name): \(.id)"'
+
+          P0_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P0") | .id // empty')
+          P1_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P1") | .id // empty')
+          P2_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P2") | .id // empty')
+          P3_ID=$(echo "$PRIORITY_DATA" | jq -r '.data.node.field.options[] | select(.name == "P3") | .id // empty')
 
           echo "Priority field: $PRIORITY_FIELD_ID"
           echo "P0=$P0_ID, P1=$P1_ID, P2=$P2_ID, P3=$P3_ID"
+
+          # If P3 doesn't exist, create it
+          if [ -z "$P3_ID" ]; then
+            echo "P3 option not found, creating it..."
+            P3_RESULT=$(gh api graphql -f query='
+              mutation($fieldId: ID!) {
+                updateProjectV2Field(input: {
+                  fieldId: $fieldId
+                  singleSelectOptions: [
+                    {name: "P0", color: RED, description: "Critical - drop everything"},
+                    {name: "P1", color: ORANGE, description: "High - address this sprint"},
+                    {name: "P2", color: YELLOW, description: "Medium - address soon"},
+                    {name: "P3", color: GREEN, description: "Low - nice to have"}
+                  ]
+                }) {
+                  projectV2Field {
+                    ... on ProjectV2SingleSelectField {
+                      options { id name }
+                    }
+                  }
+                }
+              }' -f fieldId="$PRIORITY_FIELD_ID" 2>&1) || true
+
+            # Try to get P3 ID again
+            P3_ID=$(echo "$P3_RESULT" | jq -r '.data.updateProjectV2Field.projectV2Field.options[] | select(.name == "P3") | .id // empty' 2>/dev/null)
+            if [ -z "$P3_ID" ]; then
+              echo "Could not create P3, using P2 as fallback"
+              P3_ID="$P2_ID"
+            else
+              echo "Created P3: $P3_ID"
+            fi
+          fi
 
           # Get Iteration field and current iteration
           ITER_DATA=$(gh api graphql -f query='
