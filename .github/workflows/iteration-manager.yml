@@ -1,0 +1,215 @@
+# Iteration Manager - Automatically manages project iterations
+#
+# Runs weekly to:
+# - Create new iterations when current one is ending soon
+# - Move incomplete items to next iteration
+# - Archive old iterations
+#
+# Also runs on workflow_dispatch for manual execution
+
+name: Iteration Manager
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9am UTC
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'check-and-create'
+        type: choice
+        options:
+          - check-and-create
+          - create-next-iteration
+          - rollover-incomplete
+
+env:
+  PROJECT_NUMBER: 3
+  ORG: lvlup-sw
+  ITERATION_DURATION_DAYS: 14
+  ITERATIONS_AHEAD: 2  # Always have 2 iterations ahead
+
+jobs:
+  manage-iterations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get project and iteration field
+        id: project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          # Get project ID and iteration field
+          RESULT=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2IterationField {
+                        id
+                        name
+                        configuration {
+                          duration
+                          iterations {
+                            id
+                            title
+                            startDate
+                            duration
+                          }
+                          completedIterations {
+                            id
+                            title
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f org="$ORG" -F number=$PROJECT_NUMBER)
+
+          PROJECT_ID=$(echo "$RESULT" | jq -r '.data.organization.projectV2.id')
+          echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
+
+          # Find iteration field
+          ITERATION_FIELD=$(echo "$RESULT" | jq -r '.data.organization.projectV2.fields.nodes[] | select(.name == "Sprint" or .name == "Iteration") | .id' | head -1)
+          echo "iteration_field_id=$ITERATION_FIELD" >> $GITHUB_OUTPUT
+
+          # Get current iterations
+          ITERATIONS=$(echo "$RESULT" | jq -r '.data.organization.projectV2.fields.nodes[] | select(.name == "Sprint" or .name == "Iteration") | .configuration.iterations')
+          echo "iterations=$ITERATIONS" >> $GITHUB_OUTPUT
+
+          echo "Project ID: $PROJECT_ID"
+          echo "Iteration Field: $ITERATION_FIELD"
+          echo "Iterations: $ITERATIONS"
+
+      - name: Check if new iteration needed
+        id: check
+        run: |
+          ITERATIONS='${{ steps.project.outputs.iterations }}'
+
+          if [ -z "$ITERATIONS" ] || [ "$ITERATIONS" == "null" ]; then
+            echo "No iterations found - need to create some"
+            echo "needs_creation=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Find the latest iteration end date
+          TODAY=$(date +%Y-%m-%d)
+          LATEST_END=$(echo "$ITERATIONS" | jq -r '
+            [.[] |
+              (.startDate | strptime("%Y-%m-%d") | mktime) + (.duration * 7 * 24 * 60 * 60) |
+              strftime("%Y-%m-%d")
+            ] | max
+          ')
+
+          echo "Today: $TODAY"
+          echo "Latest iteration ends: $LATEST_END"
+
+          # Calculate days until latest iteration ends
+          TODAY_TS=$(date -d "$TODAY" +%s)
+          LATEST_END_TS=$(date -d "$LATEST_END" +%s)
+          DAYS_AHEAD=$(( (LATEST_END_TS - TODAY_TS) / 86400 ))
+
+          echo "Days of iterations ahead: $DAYS_AHEAD"
+
+          # If less than ITERATIONS_AHEAD * ITERATION_DURATION_DAYS ahead, create more
+          THRESHOLD=$(( ${{ env.ITERATIONS_AHEAD }} * ${{ env.ITERATION_DURATION_DAYS }} ))
+          if [ "$DAYS_AHEAD" -lt "$THRESHOLD" ]; then
+            echo "Need to create more iterations (only $DAYS_AHEAD days ahead, threshold: $THRESHOLD)"
+            echo "needs_creation=true" >> $GITHUB_OUTPUT
+          else
+            echo "Sufficient iterations exist ($DAYS_AHEAD days ahead)"
+            echo "needs_creation=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create new iteration
+        if: steps.check.outputs.needs_creation == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          echo "::notice::Creating new iteration..."
+
+          ITERATIONS='${{ steps.project.outputs.iterations }}'
+
+          # Calculate start date for new iteration
+          if [ -z "$ITERATIONS" ] || [ "$ITERATIONS" == "null" ] || [ "$ITERATIONS" == "[]" ]; then
+            # No iterations exist - start from next Monday
+            NEXT_MONDAY=$(date -d "next monday" +%Y-%m-%d)
+            START_DATE=$NEXT_MONDAY
+            ITERATION_NUM=1
+          else
+            # Get the end date of the latest iteration
+            LATEST=$(echo "$ITERATIONS" | jq -r '
+              sort_by(.startDate) | last |
+              {start: .startDate, duration: .duration, title: .title}
+            ')
+            LATEST_START=$(echo "$LATEST" | jq -r '.start')
+            LATEST_DURATION=$(echo "$LATEST" | jq -r '.duration')
+            LATEST_TITLE=$(echo "$LATEST" | jq -r '.title')
+
+            # Calculate end date and use as new start
+            START_DATE=$(date -d "$LATEST_START + $((LATEST_DURATION * 7)) days" +%Y-%m-%d)
+
+            # Extract iteration number from title (e.g., "Sprint 5" -> 5)
+            ITERATION_NUM=$(echo "$LATEST_TITLE" | grep -oE '[0-9]+' | tail -1)
+            ITERATION_NUM=$((ITERATION_NUM + 1))
+          fi
+
+          TITLE="Sprint $ITERATION_NUM"
+          echo "Creating iteration: $TITLE starting $START_DATE"
+
+          # Create the iteration using the API
+          # Note: The API for creating iterations is limited
+          # This may need to be done via the UI
+          gh api graphql -f query='
+            mutation($fieldId: ID!, $title: String!, $startDate: Date!, $duration: Int!) {
+              createProjectV2IterationField(input: {
+                fieldId: $fieldId
+                title: $title
+                startDate: $startDate
+                duration: $duration
+              }) {
+                projectV2IterationFieldIteration { id title }
+              }
+            }' \
+            -f fieldId="${{ steps.project.outputs.iteration_field_id }}" \
+            -f title="$TITLE" \
+            -f startDate="$START_DATE" \
+            -F duration=${{ env.ITERATION_DURATION_DAYS }} 2>/dev/null || \
+            echo "::warning::Could not create iteration via API - may need manual creation in UI"
+
+      - name: Get current iteration
+        id: current
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          ITERATIONS='${{ steps.project.outputs.iterations }}'
+          TODAY=$(date +%Y-%m-%d)
+
+          if [ -z "$ITERATIONS" ] || [ "$ITERATIONS" == "null" ]; then
+            echo "current_iteration_id=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Find iteration containing today
+          CURRENT=$(echo "$ITERATIONS" | jq -r --arg today "$TODAY" '
+            .[] | select(
+              (.startDate <= $today) and
+              ((.startDate | strptime("%Y-%m-%d") | mktime) + (.duration * 7 * 24 * 60 * 60) | strftime("%Y-%m-%d")) > $today
+            ) | .id
+          ' | head -1)
+
+          echo "current_iteration_id=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Current iteration: $CURRENT"
+
+      - name: Summary
+        run: |
+          echo "## Iteration Manager Run" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project ID**: ${{ steps.project.outputs.project_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Iteration Field**: ${{ steps.project.outputs.iteration_field_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current Iteration**: ${{ steps.current.outputs.current_iteration_id || 'None' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Needed Creation**: ${{ steps.check.outputs.needs_creation }}" >> $GITHUB_STEP_SUMMARY

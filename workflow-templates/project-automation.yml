@@ -103,12 +103,138 @@ jobs:
       (github.event_name == 'issues' && github.event.action == 'opened') ||
       (github.event_name == 'pull_request' && github.event.action == 'opened')
     runs-on: ubuntu-latest
+    outputs:
+      item_id: ${{ steps.add.outputs.itemId }}
     steps:
       - name: Add to project
+        id: add
         uses: actions/add-to-project@v1.0.2
         with:
           project-url: https://github.com/orgs/lvlup-sw/projects/${{ env.PROJECT_NUMBER }}
           github-token: ${{ secrets.PROJECT_TOKEN }}
+
+  # ============================================================
+  # PROJECT FIELDS: Set Priority and Iteration based on labels
+  # ============================================================
+  project-fields:
+    needs: project-sync
+    if: needs.project-sync.outputs.item_id
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set project fields
+        uses: actions/github-script@v7
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ITEM_ID: ${{ needs.project-sync.outputs.item_id }}
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const itemId = process.env.ITEM_ID;
+            const content = context.payload.issue || context.payload.pull_request;
+            const labels = content.labels?.map(l => l.name) || [];
+            const body = (content.body || '').toLowerCase();
+
+            // Get project info
+            const projectQuery = `
+              query($org: String!, $number: Int!) {
+                organization(login: $org) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 20) {
+                      nodes {
+                        ... on ProjectV2SingleSelectField {
+                          id
+                          name
+                          options { id name }
+                        }
+                        ... on ProjectV2IterationField {
+                          id
+                          name
+                          configuration {
+                            iterations { id title startDate duration }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const { organization } = await github.graphql(projectQuery, {
+              org: 'lvlup-sw',
+              number: parseInt(process.env.PROJECT_NUMBER || '3')
+            });
+
+            const project = organization.projectV2;
+            const fields = project.fields.nodes.filter(f => f.id);
+
+            // Find Priority field and set based on label
+            const priorityField = fields.find(f => f.name === 'Priority');
+            if (priorityField) {
+              let priorityOption;
+              if (labels.includes('priority:high')) {
+                // Check for urgency keywords
+                const isUrgent = /urgent|critical|blocker|p0|asap|emergency/.test(body);
+                priorityOption = priorityField.options.find(o =>
+                  isUrgent ? o.name === 'P0' : o.name === 'P1'
+                );
+              } else if (labels.includes('priority:low')) {
+                priorityOption = priorityField.options.find(o => o.name === 'P3');
+              } else {
+                // Default to P2
+                priorityOption = priorityField.options.find(o => o.name === 'P2');
+              }
+
+              if (priorityOption) {
+                await github.graphql(`
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: { singleSelectOptionId: $value }
+                    }) { projectV2Item { id } }
+                  }
+                `, {
+                  projectId: project.id,
+                  itemId: itemId,
+                  fieldId: priorityField.id,
+                  value: priorityOption.id
+                });
+                console.log(`Set Priority to ${priorityOption.name}`);
+              }
+            }
+
+            // Find Iteration field and assign high priority to current iteration
+            const iterField = fields.find(f => f.name === 'Sprint' || f.name === 'Iteration');
+            if (iterField?.configuration?.iterations && labels.includes('priority:high')) {
+              const now = new Date();
+              const currentIter = iterField.configuration.iterations.find(iter => {
+                const start = new Date(iter.startDate);
+                const end = new Date(start.getTime() + iter.duration * 7 * 24 * 60 * 60 * 1000);
+                return now >= start && now < end;
+              });
+
+              if (currentIter) {
+                await github.graphql(`
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: { iterationId: $value }
+                    }) { projectV2Item { id } }
+                  }
+                `, {
+                  projectId: project.id,
+                  itemId: itemId,
+                  fieldId: iterField.id,
+                  value: currentIter.id
+                });
+                console.log(`Assigned to current iteration: ${currentIter.title}`);
+              }
+            }
 
   # ============================================================
   # STALE MANAGEMENT: Mark and close inactive issues

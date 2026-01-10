@@ -30,6 +30,18 @@ jobs:
     secrets: inherit
 ```
 
+#### Project Setup (`project-setup.yml`)
+One-time setup workflow for Project 3. Run manually via Actions tab:
+- Creates Priority field (P0/P1/P2/P3)
+- Verifies Iteration field exists
+- Syncs all existing open issues from configured repos
+
+#### Iteration Manager (`iteration-manager.yml`)
+Weekly scheduled workflow to manage project iterations:
+- Creates new iterations when running low
+- Runs every Monday at 9am UTC
+- Can also be triggered manually
+
 ### Workflow Templates (`workflow-templates/`)
 
 #### Project Automation
@@ -38,12 +50,43 @@ Complete automation workflow with:
 - **Auto-triage** - Labels new issues based on content patterns
 - **Auto-assign** - Assigns PR author as assignee
 - **Project sync** - Adds issues/PRs to org project board (project 3)
+- **Project fields** - Sets Priority and Iteration based on labels
 - **Stale management** - Marks/closes inactive issues after 60 days
 - **Renovate auto-merge** - Auto-merges Renovate dependency PRs
 - **Release automation** - Generates changelog and creates releases from tags
 
 ### Rulesets (`rulesets/default.json`)
 Reference template for branch protection. Copy to your repo and apply via GitHub UI or API.
+
+## Project 3 Configuration
+
+All repos feed into **Project 3** for unified issue/PR tracking.
+
+### Priority Mapping
+
+| Label | Project Priority | Iteration |
+|-------|------------------|-----------|
+| `priority:high` + urgent keywords | P0 | Current sprint |
+| `priority:high` | P1 | Current sprint |
+| (no priority label) | P2 | Backlog |
+| `priority:low` | P3 | Backlog |
+
+Urgent keywords: `urgent`, `critical`, `blocker`, `p0`, `asap`, `emergency`
+
+### Initial Setup
+
+1. Run **Project Setup** workflow from Actions tab
+2. Manually create Iteration field in Project settings if needed
+3. Create initial sprints (2-week iterations)
+4. Set up Board view sorted by Priority
+
+### Repos Configured
+
+- `ares-elite-platform`
+- `agentic-workflow`
+- `agentic-engine`
+- `lvlup-claude`
+- `DataFerry`
 
 ## Usage
 
@@ -54,6 +97,7 @@ Reference template for branch protection. Copy to your repo and apply via GitHub
 3. **Copy workflow**: Copy `workflow-templates/project-automation.yml` to `.github/workflows/`
 4. **Customize**: Update scope detection patterns in auto-triage job
 5. **Set secret**: Ensure `PROJECT_TOKEN` secret is configured for project sync
+6. **Add to project setup**: Add repo name to `REPOS` env in `project-setup.yml`
 
 ### For Existing Repos
 
@@ -76,15 +120,8 @@ jobs:
 
 ### Required Secrets
 
-| Secret | Purpose |
-|--------|---------|
-| `PROJECT_TOKEN` | PAT with `project` scope for adding items to org projects |
+| Secret | Purpose | Scopes |
+|--------|---------|--------|
+| `PROJECT_TOKEN` | PAT for project management | `project`, `repo` |
 
-## Project Configuration
-
-All repos should use **Project 3** for issue/PR tracking. Set in your workflow:
-
-```yaml
-env:
-  PROJECT_NUMBER: 3
-```
+Set at org level: **Settings > Secrets > Actions > New organization secret**

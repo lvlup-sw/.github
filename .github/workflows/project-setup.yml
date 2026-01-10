@@ -1,0 +1,180 @@
+# One-time project setup workflow
+#
+# Configures Project 3 with:
+# - Priority field (P0/P1/P2)
+# - Iteration field with 2-week sprints
+# - Syncs all open issues from specified repos
+#
+# Run manually via: Actions > Project Setup > Run workflow
+
+name: Project Setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_iterations:
+        description: 'Number of iterations to create'
+        required: true
+        default: '4'
+        type: string
+      iteration_duration:
+        description: 'Iteration duration in days'
+        required: true
+        default: '14'
+        type: string
+      sync_existing_issues:
+        description: 'Sync existing open issues to project'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  PROJECT_NUMBER: 3
+  ORG: lvlup-sw
+  REPOS: 'ares-elite-platform,agentic-workflow,agentic-engine,lvlup-claude,DataFerry'
+
+jobs:
+  setup-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get project ID
+        id: project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          PROJECT_ID=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                  title
+                }
+              }
+            }' -f org="$ORG" -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
+
+          echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
+          echo "Project ID: $PROJECT_ID"
+
+      - name: Get or create Priority field
+        id: priority
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          # Check if Priority field exists
+          PRIORITY_FIELD=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  field(name: "Priority") {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      options { id name }
+                    }
+                  }
+                }
+              }
+            }' -f projectId="${{ steps.project.outputs.project_id }}" --jq '.data.node.field.id // empty')
+
+          if [ -n "$PRIORITY_FIELD" ]; then
+            echo "Priority field exists: $PRIORITY_FIELD"
+            echo "field_id=$PRIORITY_FIELD" >> $GITHUB_OUTPUT
+          else
+            echo "Creating Priority field..."
+            PRIORITY_FIELD=$(gh api graphql -f query='
+              mutation($projectId: ID!) {
+                createProjectV2Field(input: {
+                  projectId: $projectId
+                  dataType: SINGLE_SELECT
+                  name: "Priority"
+                  singleSelectOptions: [
+                    {name: "P0", color: RED, description: "Critical - drop everything"},
+                    {name: "P1", color: ORANGE, description: "High - address this sprint"},
+                    {name: "P2", color: YELLOW, description: "Medium - address soon"},
+                    {name: "P3", color: GREEN, description: "Low - nice to have"}
+                  ]
+                }) {
+                  projectV2Field { ... on ProjectV2SingleSelectField { id } }
+                }
+              }' -f projectId="${{ steps.project.outputs.project_id }}" --jq '.data.createProjectV2Field.projectV2Field.id')
+            echo "Created Priority field: $PRIORITY_FIELD"
+            echo "field_id=$PRIORITY_FIELD" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get or create Iteration field
+        id: iteration
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          # Check if Iteration/Sprint field exists
+          ITERATION_FIELD=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2IterationField {
+                        id
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f projectId="${{ steps.project.outputs.project_id }}" --jq '.data.node.fields.nodes[] | select(.name == "Sprint" or .name == "Iteration") | .id' | head -1)
+
+          if [ -n "$ITERATION_FIELD" ]; then
+            echo "Iteration field exists: $ITERATION_FIELD"
+            echo "field_id=$ITERATION_FIELD" >> $GITHUB_OUTPUT
+          else
+            echo "Creating Iteration field..."
+            # Note: createProjectV2IterationField is not available via API
+            # Iterations must be created via UI first, then managed via API
+            echo "::warning::Iteration field must be created manually in GitHub UI first"
+            echo "field_id=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync existing issues to project
+        if: ${{ inputs.sync_existing_issues }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          echo "Syncing existing issues from repos: $REPOS"
+
+          IFS=',' read -ra REPO_ARRAY <<< "$REPOS"
+          for repo in "${REPO_ARRAY[@]}"; do
+            echo "Processing $repo..."
+
+            # Get all open issues
+            ISSUES=$(gh issue list --repo "$ORG/$repo" --state open --json number,nodeId --limit 100)
+
+            # Add each issue to project
+            echo "$ISSUES" | jq -r '.[].nodeId' | while read -r node_id; do
+              if [ -n "$node_id" ]; then
+                echo "Adding issue $node_id to project..."
+                gh api graphql -f query='
+                  mutation($projectId: ID!, $contentId: ID!) {
+                    addProjectV2ItemByContentId(input: {
+                      projectId: $projectId
+                      contentId: $contentId
+                    }) {
+                      item { id }
+                    }
+                  }' -f projectId="${{ steps.project.outputs.project_id }}" -f contentId="$node_id" 2>/dev/null || echo "  (already in project or error)"
+              fi
+            done
+
+            echo "Completed $repo"
+          done
+
+      - name: Summary
+        run: |
+          echo "## Project Setup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project ID**: ${{ steps.project.outputs.project_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Priority Field**: ${{ steps.priority.outputs.field_id || 'Created' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Iteration Field**: ${{ steps.iteration.outputs.field_id || 'Needs manual creation' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. If Iteration field was not created, add it manually in Project settings" >> $GITHUB_STEP_SUMMARY
+          echo "2. Create initial iterations (2-week sprints)" >> $GITHUB_STEP_SUMMARY
+          echo "3. Set up project views with Priority sorting" >> $GITHUB_STEP_SUMMARY
