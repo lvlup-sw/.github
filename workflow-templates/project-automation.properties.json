@@ -1,0 +1,6 @@
+{
+  "name": "Project Automation",
+  "description": "Auto-triage, project sync, label sync, stale management, and release automation",
+  "iconName": "octicon project",
+  "categories": ["Automation"]
+}
