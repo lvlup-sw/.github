@@ -204,7 +204,7 @@ jobs:
           echo "Priority field: $PRIORITY_FIELD_ID"
           echo "P0=$P0_ID, P1=$P1_ID, P2=$P2_ID, P3=$P3_ID"
 
-          # If P3 doesn't exist, create it
+          # If P3 doesn't exist, create it (this replaces all options with new IDs)
           if [ -z "$P3_ID" ]; then
             echo "P3 option not found, creating it..."
             P3_RESULT=$(gh api graphql -f query='
@@ -226,13 +226,18 @@ jobs:
                 }
               }' -f fieldId="$PRIORITY_FIELD_ID" 2>&1) || true
 
-            # Try to get P3 ID again
+            # Refresh ALL option IDs (the mutation replaces options with new IDs)
+            P0_ID=$(echo "$P3_RESULT" | jq -r '.data.updateProjectV2Field.projectV2Field.options[] | select(.name == "P0") | .id // empty' 2>/dev/null)
+            P1_ID=$(echo "$P3_RESULT" | jq -r '.data.updateProjectV2Field.projectV2Field.options[] | select(.name == "P1") | .id // empty' 2>/dev/null)
+            P2_ID=$(echo "$P3_RESULT" | jq -r '.data.updateProjectV2Field.projectV2Field.options[] | select(.name == "P2") | .id // empty' 2>/dev/null)
             P3_ID=$(echo "$P3_RESULT" | jq -r '.data.updateProjectV2Field.projectV2Field.options[] | select(.name == "P3") | .id // empty' 2>/dev/null)
+
             if [ -z "$P3_ID" ]; then
               echo "Could not create P3, using P2 as fallback"
               P3_ID="$P2_ID"
             else
               echo "Created P3: $P3_ID"
+              echo "Updated IDs: P0=$P0_ID, P1=$P1_ID, P2=$P2_ID, P3=$P3_ID"
             fi
           fi
 
