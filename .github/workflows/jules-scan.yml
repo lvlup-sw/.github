@@ -23,7 +23,7 @@ jobs:
 
       - name: Run Jules Security Analysis
         id: jules-security
-        uses: google-labs-code/jules-invoke@v1
+        uses: google-labs-code/jules-invoke@v1.0.0
         with:
           prompt: |
             You are a security auditor. Analyze this codebase for:
@@ -103,7 +103,7 @@ jobs:
 
       - name: Run Jules Tech Debt Analysis
         id: jules-techdebt
-        uses: google-labs-code/jules-invoke@v1
+        uses: google-labs-code/jules-invoke@v1.0.0
         with:
           prompt: |
             You are a code quality analyst. Analyze this codebase for:
