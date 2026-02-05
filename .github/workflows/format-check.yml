@@ -1,0 +1,86 @@
+# =============================================================================
+# Reusable Workflow: Code Format Verification
+# =============================================================================
+# Verifies that code is properly formatted using 'dotnet format'.
+# Formatting rules are defined by Lvlup.Build package (.globalconfig).
+#
+# Usage:
+#   jobs:
+#     format:
+#       uses: lvlup-sw/.github/.github/workflows/format-check.yml@main
+#       with:
+#         solution-path: 'MyProject.slnx'
+#         dotnet-version: '9.0.x'
+#
+# If check fails, developers should run locally:
+#   dotnet format <solution-path>
+# =============================================================================
+
+name: Format Check
+
+on:
+  workflow_call:
+    inputs:
+      solution-path:
+        description: 'Path to solution file (.sln or .slnx)'
+        required: true
+        type: string
+      dotnet-version:
+        description: '.NET SDK version (e.g., 9.0.x, 10.0.x)'
+        required: false
+        type: string
+        default: '9.0.x'
+      dotnet-quality:
+        description: '.NET SDK quality (ga, preview)'
+        required: false
+        type: string
+        default: 'ga'
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+
+jobs:
+  format:
+    name: Verify Formatting
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+          dotnet-quality: ${{ inputs.dotnet-quality }}
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ inputs.solution-path }}
+
+      - name: Check formatting
+        id: format-check
+        run: |
+          echo "Checking code formatting..."
+          echo ""
+
+          if ! dotnet format ${{ inputs.solution-path }} --verify-no-changes --verbosity normal 2>&1; then
+            echo ""
+            echo "=========================================="
+            echo "❌ Code formatting issues detected!"
+            echo "=========================================="
+            echo ""
+            echo "To fix locally, run:"
+            echo ""
+            echo "  dotnet format ${{ inputs.solution-path }}"
+            echo ""
+            echo "Then commit the changes and push."
+            echo ""
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ Code formatting verified - no issues found."
