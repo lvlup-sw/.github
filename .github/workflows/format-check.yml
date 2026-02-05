@@ -1,8 +1,8 @@
 # =============================================================================
-# Reusable Workflow: Code Format Verification
+# Reusable Workflow: Code Format Verification & Auto-Fix
 # =============================================================================
-# Verifies that code is properly formatted using 'dotnet format'.
-# Formatting rules are defined by Lvlup.Build package (.globalconfig).
+# Verifies code formatting using 'dotnet format'. If issues are found on a PR,
+# automatically fixes them and commits the changes back to the branch.
 #
 # Usage:
 #   jobs:
@@ -12,8 +12,10 @@
 #         solution-path: 'MyProject.slnx'
 #         dotnet-version: '9.0.x'
 #
-# If check fails, developers should run locally:
-#   dotnet format <solution-path>
+# Auto-fix behavior:
+#   - On pull_request: Fixes issues and commits to PR branch
+#   - On push to main/develop: Fails (no auto-fix on protected branches)
+#   - Set auto-fix: false to disable auto-fix entirely
 # =============================================================================
 
 name: Format Check
@@ -40,17 +42,29 @@ on:
         required: false
         type: string
         default: '.'
+      auto-fix:
+        description: 'Automatically fix and commit formatting issues on PRs'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   format:
     name: Verify Formatting
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Use the PR head ref for PRs, otherwise use the default
+          ref: ${{ github.head_ref || github.ref }}
+          # Need to fetch with token that can push
+          token: ${{ github.token }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -65,22 +79,55 @@ jobs:
         id: format-check
         run: |
           echo "Checking code formatting..."
-          echo ""
-
-          if ! dotnet format ${{ inputs.solution-path }} --verify-no-changes --verbosity normal 2>&1; then
-            echo ""
-            echo "=========================================="
-            echo "❌ Code formatting issues detected!"
-            echo "=========================================="
-            echo ""
-            echo "To fix locally, run:"
-            echo ""
-            echo "  dotnet format ${{ inputs.solution-path }}"
-            echo ""
-            echo "Then commit the changes and push."
-            echo ""
-            exit 1
+          if dotnet format ${{ inputs.solution-path }} --verify-no-changes --verbosity normal 2>&1; then
+            echo "formatted=false" >> $GITHUB_OUTPUT
+            echo "✅ Code formatting verified - no issues found."
+          else
+            echo "formatted=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Formatting issues detected."
           fi
 
+      - name: Auto-fix formatting
+        if: steps.format-check.outputs.formatted == 'true' && inputs.auto-fix && github.event_name == 'pull_request'
+        run: |
+          echo "Running dotnet format to fix issues..."
+          dotnet format ${{ inputs.solution-path }} --verbosity normal
+          echo "✅ Formatting fixed."
+
+      - name: Commit fixes
+        if: steps.format-check.outputs.formatted == 'true' && inputs.auto-fix && github.event_name == 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if there are changes to commit
+          if git diff --quiet; then
+            echo "No changes to commit after formatting."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "style: auto-fix formatting via dotnet format
+
+          Applied automatic formatting fixes using 'dotnet format'.
+
+          Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+          git push
+          echo "✅ Formatting fixes committed and pushed."
+
+      - name: Fail if issues found and not auto-fixed
+        if: steps.format-check.outputs.formatted == 'true' && (!inputs.auto-fix || github.event_name != 'pull_request')
+        run: |
           echo ""
-          echo "✅ Code formatting verified - no issues found."
+          echo "=========================================="
+          echo "❌ Code formatting issues detected!"
+          echo "=========================================="
+          echo ""
+          echo "To fix locally, run:"
+          echo ""
+          echo "  dotnet format ${{ inputs.solution-path }}"
+          echo ""
+          echo "Then commit the changes and push."
+          echo ""
+          exit 1
