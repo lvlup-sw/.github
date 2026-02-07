@@ -1,9 +1,9 @@
 # Iteration Manager - Automatically manages project iterations
 #
 # Runs weekly to:
-# - Create new iterations when current one is ending soon
-# - Move incomplete items to next iteration
-# - Archive old iterations
+# - Check if new iterations are needed
+# - Create new iterations when current coverage is running low
+# - Report current iteration status
 #
 # Also runs on workflow_dispatch for manual execution
 
@@ -77,13 +77,13 @@ jobs:
           ITERATION_FIELD=$(echo "$RESULT" | jq -r '.data.organization.projectV2.fields.nodes[] | select(.name == "Sprint" or .name == "Iteration") | .id' | head -1)
           echo "iteration_field_id=$ITERATION_FIELD" >> $GITHUB_OUTPUT
 
-          # Get current iterations
-          ITERATIONS=$(echo "$RESULT" | jq -r '.data.organization.projectV2.fields.nodes[] | select(.name == "Sprint" or .name == "Iteration") | .configuration.iterations')
+          # Get current iterations (compact JSON to avoid multi-line $GITHUB_OUTPUT issues)
+          ITERATIONS=$(echo "$RESULT" | jq -c '.data.organization.projectV2.fields.nodes[] | select(.name == "Sprint" or .name == "Iteration") | .configuration.iterations')
           echo "iterations=$ITERATIONS" >> $GITHUB_OUTPUT
 
           echo "Project ID: $PROJECT_ID"
           echo "Iteration Field: $ITERATION_FIELD"
-          echo "Iterations: $ITERATIONS"
+          echo "Iterations: $(echo "$ITERATIONS" | jq .)"
 
       - name: Check if new iteration needed
         id: check
@@ -99,11 +99,15 @@ jobs:
           # Find the latest iteration end date
           TODAY=$(date +%Y-%m-%d)
           LATEST_END=$(echo "$ITERATIONS" | jq -r '
-            [.[] |
-              (.startDate | strptime("%Y-%m-%d") | mktime) + (.duration * 7 * 24 * 60 * 60) |
-              strftime("%Y-%m-%d")
-            ] | max
+            [.[] | {
+              start: .startDate,
+              days: (.duration * 7)
+            }] | sort_by(.start) | last |
+            .start as $s | .days as $d |
+            ($s + " + " + ($d | tostring) + " days")
           ')
+          # Use date -d for reliable date arithmetic
+          LATEST_END=$(date -d "$LATEST_END" +%Y-%m-%d)
 
           echo "Today: $TODAY"
           echo "Latest iteration ends: $LATEST_END"
@@ -133,53 +137,59 @@ jobs:
           echo "::notice::Creating new iteration..."
 
           ITERATIONS='${{ steps.project.outputs.iterations }}'
+          FIELD_ID="${{ steps.project.outputs.iteration_field_id }}"
 
           # Calculate start date for new iteration
           if [ -z "$ITERATIONS" ] || [ "$ITERATIONS" == "null" ] || [ "$ITERATIONS" == "[]" ]; then
             # No iterations exist - start from next Monday
-            NEXT_MONDAY=$(date -d "next monday" +%Y-%m-%d)
-            START_DATE=$NEXT_MONDAY
+            START_DATE=$(date -d "next monday" +%Y-%m-%d)
             ITERATION_NUM=1
           else
-            # Get the end date of the latest iteration
-            LATEST=$(echo "$ITERATIONS" | jq -r '
-              sort_by(.startDate) | last |
-              {start: .startDate, duration: .duration, title: .title}
-            ')
-            LATEST_START=$(echo "$LATEST" | jq -r '.start')
-            LATEST_DURATION=$(echo "$LATEST" | jq -r '.duration')
-            LATEST_TITLE=$(echo "$LATEST" | jq -r '.title')
+            # Get the latest iteration details
+            LATEST_START=$(echo "$ITERATIONS" | jq -r 'sort_by(.startDate) | last | .startDate')
+            LATEST_DURATION=$(echo "$ITERATIONS" | jq -r 'sort_by(.startDate) | last | .duration')
+            LATEST_TITLE=$(echo "$ITERATIONS" | jq -r 'sort_by(.startDate) | last | .title')
 
-            # Calculate end date and use as new start
+            # Calculate end date of latest iteration = start of new one
             START_DATE=$(date -d "$LATEST_START + $((LATEST_DURATION * 7)) days" +%Y-%m-%d)
 
-            # Extract iteration number from title (e.g., "Sprint 5" -> 5)
+            # Extract iteration number from title (e.g., "Sprint 5" -> 5, "Iteration 3" -> 3)
             ITERATION_NUM=$(echo "$LATEST_TITLE" | grep -oE '[0-9]+' | tail -1)
             ITERATION_NUM=$((ITERATION_NUM + 1))
           fi
 
           TITLE="Sprint $ITERATION_NUM"
-          echo "Creating iteration: $TITLE starting $START_DATE"
+          DURATION_WEEKS=$(( ${{ env.ITERATION_DURATION_DAYS }} / 7 ))
+          echo "Creating iteration: $TITLE starting $START_DATE (${DURATION_WEEKS}w)"
 
-          # Create the iteration using the API
-          # Note: The API for creating iterations is limited
-          # This may need to be done via the UI
+          # Fetch existing iterations to preserve them when appending
+          EXISTING=$(echo "$ITERATIONS" | jq -c '[.[] | {startDate: .startDate, duration: .duration}]')
+          # Append new iteration
+          UPDATED=$(echo "$EXISTING" | jq -c --arg start "$START_DATE" --argjson dur "$DURATION_WEEKS" \
+            '. + [{startDate: $start, duration: $dur}]')
+
           gh api graphql -f query='
-            mutation($fieldId: ID!, $title: String!, $startDate: Date!, $duration: Int!) {
-              createProjectV2IterationField(input: {
+            mutation($fieldId: ID!, $iterations: [ProjectV2IterationFieldIteration!]!) {
+              updateProjectV2Field(input: {
                 fieldId: $fieldId
-                title: $title
-                startDate: $startDate
-                duration: $duration
+                iterationField: {
+                  iterations: $iterations
+                }
               }) {
-                projectV2IterationFieldIteration { id title }
+                projectV2Field {
+                  ... on ProjectV2IterationField {
+                    id
+                    configuration {
+                      iterations { id title startDate duration }
+                    }
+                  }
+                }
               }
             }' \
-            -f fieldId="${{ steps.project.outputs.iteration_field_id }}" \
-            -f title="$TITLE" \
-            -f startDate="$START_DATE" \
-            -F duration=${{ env.ITERATION_DURATION_DAYS }} 2>/dev/null || \
-            echo "::warning::Could not create iteration via API - may need manual creation in UI"
+            -f fieldId="$FIELD_ID" \
+            --argjson iterations "$UPDATED" && \
+            echo "::notice::Created iteration $TITLE starting $START_DATE" || \
+            echo "::warning::Could not create iteration via API - create manually: $TITLE starting $START_DATE (${DURATION_WEEKS}-week sprint)"
 
       - name: Get current iteration
         id: current
@@ -194,16 +204,21 @@ jobs:
             exit 0
           fi
 
-          # Find iteration containing today
-          CURRENT=$(echo "$ITERATIONS" | jq -r --arg today "$TODAY" '
-            .[] | select(
-              (.startDate <= $today) and
-              ((.startDate | strptime("%Y-%m-%d") | mktime) + (.duration * 7 * 24 * 60 * 60) | strftime("%Y-%m-%d")) > $today
-            ) | .id
-          ' | head -1)
+          # Find iteration containing today using date -d for end date calculation
+          CURRENT=""
+          for row in $(echo "$ITERATIONS" | jq -c '.[]'); do
+            START=$(echo "$row" | jq -r '.startDate')
+            DURATION=$(echo "$row" | jq -r '.duration')
+            ID=$(echo "$row" | jq -r '.id')
+            END=$(date -d "$START + $((DURATION * 7)) days" +%Y-%m-%d)
+            if [[ "$TODAY" >= "$START" && "$TODAY" < "$END" ]]; then
+              CURRENT="$ID"
+              break
+            fi
+          done
 
           echo "current_iteration_id=$CURRENT" >> $GITHUB_OUTPUT
-          echo "Current iteration: $CURRENT"
+          echo "Current iteration: ${CURRENT:-None}"
 
       - name: Summary
         run: |
