@@ -1,0 +1,89 @@
+# =============================================================================
+# Reusable Workflow: Coverage Gate & PR Comment
+# =============================================================================
+# Enforces code coverage thresholds and posts a summary comment on pull
+# requests. Designed to run AFTER build-and-test.yml has uploaded the
+# 'coverage-reports' artifact containing Cobertura XML files.
+#
+# Usage:
+#   jobs:
+#     coverage:
+#       uses: lvlup-sw/.github/.github/workflows/coverage-gate.yml@main
+#       with:
+#         coverage-threshold: 80
+#
+# Behavior:
+#   - Downloads coverage artifacts from the calling workflow
+#   - Merges reports using ReportGenerator
+#   - Runs coverage-gate.sh to enforce the threshold
+#   - Posts or updates a PR comment with the coverage summary
+# =============================================================================
+
+name: Coverage Gate
+
+on:
+  workflow_call:
+    inputs:
+      coverage-threshold:
+        description: 'Minimum line coverage percent'
+        required: false
+        type: number
+        default: 80
+
+jobs:
+  coverage-gate:
+    name: Enforce Coverage Threshold
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-reports
+          path: ./coverage-reports
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Install ReportGenerator
+        run: dotnet tool install -g dotnet-reportgenerator-globaltool
+
+      - name: Merge coverage reports
+        run: |
+          reportgenerator \
+            -reports:"./coverage-reports/**/coverage.cobertura.xml" \
+            -targetdir:"./coverage-merged" \
+            -reporttypes:"Cobertura;TextSummary"
+
+      - name: Download coverage gate script
+        run: |
+          curl -sL https://raw.githubusercontent.com/lvlup-sw/.github/main/scripts/ci/coverage-gate.sh \
+            -o ./coverage-gate.sh
+          chmod +x ./coverage-gate.sh
+
+      - name: Run coverage gate
+        id: coverage
+        run: |
+          ./coverage-gate.sh \
+            --coverage-file ./coverage-merged/Cobertura.xml \
+            --threshold ${{ inputs.coverage-threshold }} \
+            --output-dir ./coverage-merged
+
+      - name: Post PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "./coverage-merged/pr-comment.md" ]; then
+            gh pr comment ${{ github.event.pull_request.number }} \
+              --body-file ./coverage-merged/pr-comment.md \
+              --edit-last || \
+            gh pr comment ${{ github.event.pull_request.number }} \
+              --body-file ./coverage-merged/pr-comment.md
+          fi
