@@ -4,13 +4,19 @@
 # Verifies code formatting using 'dotnet format'. If issues are found on a PR,
 # automatically fixes them and commits the changes back to the branch.
 #
+# Uses 'dotnet format whitespace' + 'dotnet format style' separately to avoid
+# analyzer code fixer crashes on .NET 10 preview (System.NotSupportedException:
+# Changing document properties is not supported). Analyzer issues are caught by
+# the build step instead.
+#
 # Usage:
 #   jobs:
 #     format:
 #       uses: lvlup-sw/.github/.github/workflows/format-check.yml@main
 #       with:
 #         solution-path: 'MyProject.slnx'
-#         dotnet-version: '9.0.x'
+#         dotnet-version: '10.0.x'
+#         dotnet-quality: 'preview'
 #
 # Auto-fix behavior:
 #   - On pull_request: Fixes issues and commits to PR branch
@@ -79,19 +85,38 @@ jobs:
         id: format-check
         run: |
           echo "Checking code formatting..."
-          if dotnet format ${{ inputs.solution-path }} --verify-no-changes --verbosity normal 2>&1; then
+          failed=false
+
+          # Check whitespace formatting (indentation, spacing, line endings)
+          if ! dotnet format whitespace ${{ inputs.solution-path }} --verify-no-changes --verbosity normal 2>&1; then
+            echo "⚠️ Whitespace formatting issues detected."
+            failed=true
+          fi
+
+          # Check style formatting (using directives, code style rules)
+          if ! dotnet format style ${{ inputs.solution-path }} --verify-no-changes --verbosity normal 2>&1; then
+            echo "⚠️ Style formatting issues detected."
+            failed=true
+          fi
+
+          # Note: 'dotnet format analyzers' is intentionally skipped here.
+          # Analyzer code fixers crash on .NET 10 preview with:
+          #   System.NotSupportedException: Changing document properties is not supported
+          # Analyzer rules are enforced during build via Lvlup.Build globalconfig instead.
+
+          if [ "$failed" = true ]; then
+            echo "formatted=true" >> $GITHUB_OUTPUT
+          else
             echo "formatted=false" >> $GITHUB_OUTPUT
             echo "✅ Code formatting verified - no issues found."
-          else
-            echo "formatted=true" >> $GITHUB_OUTPUT
-            echo "⚠️ Formatting issues detected."
           fi
 
       - name: Auto-fix formatting
         if: steps.format-check.outputs.formatted == 'true' && inputs.auto-fix && github.event_name == 'pull_request'
         run: |
           echo "Running dotnet format to fix issues..."
-          dotnet format ${{ inputs.solution-path }} --verbosity normal
+          dotnet format whitespace ${{ inputs.solution-path }} --verbosity normal
+          dotnet format style ${{ inputs.solution-path }} --verbosity normal
           echo "✅ Formatting fixed."
 
       - name: Commit fixes
@@ -126,7 +151,8 @@ jobs:
           echo ""
           echo "To fix locally, run:"
           echo ""
-          echo "  dotnet format ${{ inputs.solution-path }}"
+          echo "  dotnet format whitespace ${{ inputs.solution-path }}"
+          echo "  dotnet format style ${{ inputs.solution-path }}"
           echo ""
           echo "Then commit the changes and push."
           echo ""
