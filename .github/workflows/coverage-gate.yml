@@ -10,7 +10,7 @@
 #     coverage:
 #       uses: lvlup-sw/.github/.github/workflows/coverage-gate.yml@main
 #       with:
-#         coverage-threshold: 80
+#         coverage-threshold: 90
 #
 # Behavior:
 #   - Downloads coverage artifacts from the calling workflow
@@ -28,7 +28,12 @@ on:
         description: 'Minimum line coverage percent'
         required: false
         type: number
-        default: 80
+        default: 90
+      dotnet-version:
+        description: '.NET SDK version for ReportGenerator (e.g., 9.0.x, 10.0.x)'
+        required: false
+        type: string
+        default: '9.0.x'
 
 jobs:
   coverage-gate:
@@ -37,8 +42,12 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - name: Checkout
+      - name: Checkout shared scripts
         uses: actions/checkout@v4
+        with:
+          repository: lvlup-sw/.github
+          sparse-checkout: scripts/ci
+          path: .shared
 
       - name: Download coverage artifacts
         uses: actions/download-artifact@v4
@@ -49,7 +58,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: ${{ inputs.dotnet-version }}
 
       - name: Install ReportGenerator
         run: dotnet tool install -g dotnet-reportgenerator-globaltool
@@ -61,22 +70,17 @@ jobs:
             -targetdir:"./coverage-merged" \
             -reporttypes:"Cobertura;TextSummary"
 
-      - name: Download coverage gate script
-        run: |
-          curl -sL https://raw.githubusercontent.com/lvlup-sw/.github/main/scripts/ci/coverage-gate.sh \
-            -o ./coverage-gate.sh
-          chmod +x ./coverage-gate.sh
-
       - name: Run coverage gate
         id: coverage
         run: |
-          ./coverage-gate.sh \
+          chmod +x .shared/scripts/ci/coverage-gate.sh
+          .shared/scripts/ci/coverage-gate.sh \
             --coverage-file ./coverage-merged/Cobertura.xml \
             --threshold ${{ inputs.coverage-threshold }} \
             --output-dir ./coverage-merged
 
       - name: Post PR comment
-        if: always()
+        if: always() && github.event.pull_request.number
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

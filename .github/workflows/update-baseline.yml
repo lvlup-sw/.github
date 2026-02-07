@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      dotnet-version:
+        description: '.NET SDK version for ReportGenerator (e.g., 9.0.x, 10.0.x)'
+        required: false
+        type: string
+        default: '9.0.x'
 
 jobs:
   update-baseline:
@@ -37,7 +42,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: ${{ inputs.dotnet-version }}
 
       - name: Install ReportGenerator
         run: dotnet tool install -g dotnet-reportgenerator-globaltool
@@ -49,6 +54,8 @@ jobs:
             -targetdir:"./coverage-merged" \
             -reporttypes:"JsonSummary"
 
+      # TODO: Wire up baseline consumption in coverage-gate.yml for diff comparisons
+      # See: coverage-gate.sh --baseline flag (currently unimplemented)
       - name: Cache baseline coverage
         uses: actions/cache/save@v4
         with:

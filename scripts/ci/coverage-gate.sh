@@ -9,7 +9,7 @@
 #
 # Options:
 #   --coverage-file <path>   Path to merged cobertura XML (default: ./coverage-merged/Cobertura.xml)
-#   --threshold <percent>    Minimum line coverage required (default: 80)
+#   --threshold <percent>    Minimum line coverage required (default: 90, or COVERAGE_THRESHOLD env var)
 #   --output-dir <path>      Directory for generated files (default: ./coverage-merged)
 #   --baseline <path>        Optional baseline JSON for diff calculation
 #
@@ -187,8 +187,11 @@ EOF
 # Main entry point (only runs when script is executed directly, not sourced)
 main() {
   local coverage_file="./coverage-merged/Cobertura.xml"
-  local threshold=80
+  # Defaults align with org policy; override via env vars if needed
+  local threshold="${COVERAGE_THRESHOLD:-90}"
+  local branch_threshold="${BRANCH_COVERAGE_THRESHOLD:-70}"
   local output_dir="./coverage-merged"
+  # TODO: implement baseline diff handling for coverage gating (compare current vs cached baseline)
   local baseline=""
 
   # Parse arguments
