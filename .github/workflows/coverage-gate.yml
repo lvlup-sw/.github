@@ -86,8 +86,10 @@ jobs:
         run: |
           if [ -f "./coverage-merged/pr-comment.md" ]; then
             gh pr comment ${{ github.event.pull_request.number }} \
+              --repo ${{ github.repository }} \
               --body-file ./coverage-merged/pr-comment.md \
               --edit-last || \
             gh pr comment ${{ github.event.pull_request.number }} \
+              --repo ${{ github.repository }} \
               --body-file ./coverage-merged/pr-comment.md
           fi
