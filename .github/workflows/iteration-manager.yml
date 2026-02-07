@@ -162,17 +162,18 @@ jobs:
           DURATION_WEEKS=$(( ${{ env.ITERATION_DURATION_DAYS }} / 7 ))
           echo "Creating iteration: $TITLE starting $START_DATE (${DURATION_WEEKS}w)"
 
-          # Fetch existing iterations to preserve them when appending
-          EXISTING=$(echo "$ITERATIONS" | jq -c '[.[] | {startDate: .startDate, duration: .duration}]')
+          # Preserve existing iterations (include id and title so they aren't lost)
+          EXISTING=$(echo "$ITERATIONS" | jq -c '[.[] | {id: .id, title: .title, startDate: .startDate, duration: .duration}]')
           # Append new iteration
-          UPDATED=$(echo "$EXISTING" | jq -c --arg start "$START_DATE" --argjson dur "$DURATION_WEEKS" \
-            '. + [{startDate: $start, duration: $dur}]')
+          UPDATED=$(echo "$EXISTING" | jq -c --arg start "$START_DATE" --argjson dur "$DURATION_WEEKS" --arg title "$TITLE" \
+            '. + [{startDate: $start, duration: $dur, title: $title}]')
 
           gh api graphql -f query='
-            mutation($fieldId: ID!, $iterations: [ProjectV2IterationFieldIteration!]!) {
+            mutation($fieldId: ID!, $duration: Int!, $iterations: [ProjectV2Iteration!]!) {
               updateProjectV2Field(input: {
                 fieldId: $fieldId
-                iterationField: {
+                iterationConfiguration: {
+                  duration: $duration
                   iterations: $iterations
                 }
               }) {
@@ -187,6 +188,7 @@ jobs:
               }
             }' \
             -f fieldId="$FIELD_ID" \
+            -F duration="$DURATION_WEEKS" \
             --argjson iterations "$UPDATED" && \
             echo "::notice::Created iteration $TITLE starting $START_DATE" || \
             echo "::warning::Could not create iteration via API - create manually: $TITLE starting $START_DATE (${DURATION_WEEKS}-week sprint)"
