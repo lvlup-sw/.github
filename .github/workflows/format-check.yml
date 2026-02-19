@@ -53,11 +53,16 @@ on:
         required: false
         type: boolean
         default: true
+      runner:
+        description: 'GitHub Actions runner label'
+        required: false
+        type: string
+        default: 'blacksmith-4vcpu-ubuntu-2204'
 
 jobs:
   format:
     name: Verify Formatting
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
     defaults:

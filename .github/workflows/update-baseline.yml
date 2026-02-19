@@ -21,7 +21,7 @@ on:
         description: 'GitHub Actions runner label'
         required: false
         type: string
-        default: 'ubuntu-latest'
+        default: 'blacksmith-4vcpu-ubuntu-2204'
       dotnet-version:
         description: '.NET SDK version for ReportGenerator (e.g., 9.0.x, 10.0.x)'
         required: false

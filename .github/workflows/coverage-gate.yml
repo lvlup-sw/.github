@@ -34,11 +34,16 @@ on:
         required: false
         type: string
         default: '9.0.x'
+      runner:
+        description: 'GitHub Actions runner label'
+        required: false
+        type: string
+        default: 'blacksmith-4vcpu-ubuntu-2204'
 
 jobs:
   coverage-gate:
     name: Enforce Coverage Threshold
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       pull-requests: write
     steps:
