@@ -57,7 +57,7 @@ on:
         description: 'GitHub Actions runner label'
         required: false
         type: string
-        default: 'blacksmith-4vcpu-ubuntu-2204'
+        default: 'self-hosted'
 
 jobs:
   format:

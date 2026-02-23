@@ -32,7 +32,7 @@ env:
 
 jobs:
   manage-iterations:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Get project and iteration field
         id: project
