@@ -1,0 +1,6 @@
+{
+  "resource_group_name": "rg-basileus-runners-tfstate-dev",
+  "storage_account_name": "stbasileusrunstatedev",
+  "container_name": "tfstate",
+  "key": "github-runners.terraform.tfstate"
+}

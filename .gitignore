@@ -1,0 +1,8 @@
+.worktrees/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+provider.conf.json
+.azure/

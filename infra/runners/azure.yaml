@@ -1,0 +1,13 @@
+name: basileus-runners
+metadata:
+  template: basileus-runners@1.0.0
+
+infra:
+  provider: terraform
+  path: .
+
+hooks:
+  preprovision:
+    shell: sh
+    run: ./setup.sh
+    continueOnError: false

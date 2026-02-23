@@ -1,0 +1,23 @@
+.git
+*.md
+LICENSE
+.gitignore
+.dockerignore
+
+# Terraform
+*.tf
+*.tfvars
+*.tfvars.json
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+provider.conf.json
+provider.conf.json.example
+
+# azd
+azure.yaml
+.azure/
+
+# Scripts
+setup.sh
