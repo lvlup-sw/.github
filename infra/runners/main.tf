@@ -63,14 +63,20 @@ resource "azurerm_resource_group" "runners" {
 }
 
 ################################################################################
-# Container App Environment (consumption-only, system-managed networking)
+# Container App Environment (VNet-integrated via Basileus snet-runners subnet)
+#
+# The subnet lives in rg-basileus-{env} but Azure allows cross-RG subnet
+# references. This places runners on the same VNet as the Basileus Container
+# Apps, giving them direct access to internal-only services (AgentHost, etc.)
+# without requiring VNet peering or public exposure.
 ################################################################################
 
 resource "azurerm_container_app_environment" "runners" {
-  name                = "cae-basileus-runners-${var.environment}"
-  location            = azurerm_resource_group.runners.location
-  resource_group_name = azurerm_resource_group.runners.name
-  tags                = local.common_tags
+  name                     = "cae-basileus-runners-${var.environment}"
+  location                 = azurerm_resource_group.runners.location
+  resource_group_name      = azurerm_resource_group.runners.name
+  infrastructure_subnet_id = var.basileus_runners_subnet_id != "" ? var.basileus_runners_subnet_id : null
+  tags                     = local.common_tags
 }
 
 ################################################################################

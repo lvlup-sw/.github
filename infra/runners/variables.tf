@@ -14,9 +14,15 @@ variable "environment" {
 }
 
 variable "location" {
-  description = "Azure region for all resources"
+  description = "Azure region for all resources. Must match the Basileus VNet region when using VNet integration."
   type        = string
-  default     = "eastus2"
+  default     = "canadacentral"
+}
+
+variable "basileus_runners_subnet_id" {
+  description = "Subnet ID for VNet-integrated runner CAE. Get from Basileus infra: terraform output -raw runners_subnet_id"
+  type        = string
+  default     = ""
 }
 
 variable "github_runner_pat" {

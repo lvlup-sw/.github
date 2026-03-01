@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCATION="${AZURE_LOCATION:-eastus2}"
+LOCATION="${AZURE_LOCATION:-canadacentral}"
 
 echo "==> GitHub Runners: pre-provisioning checks"
 
