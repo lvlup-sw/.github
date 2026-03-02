@@ -8,9 +8,11 @@
 # What it does:
 #   1. Checks Azure CLI authentication
 #   2. Bootstraps Terraform state backend (storage account) if needed
+#   3. Auto-detects Basileus runners subnet for VNet integration
 #
 # Prerequisites:
 #   azd env set TF_VAR_github_runner_pat "ghp_xxx"
+#   Deploy Basileus infra first (azd up in basileus/) for VNet integration
 # =============================================================================
 set -euo pipefail
 
@@ -79,6 +81,31 @@ else
         --output none
 
     echo "  -> State backend created."
+fi
+
+# --- Auto-detect Basileus runners subnet ---
+BASILEUS_RG="rg-basileus-${ENVIRONMENT}"
+BASILEUS_VNET="vnet-basileus-${ENVIRONMENT}"
+SUBNET_NAME="snet-runners"
+
+CURRENT_SUBNET="$(azd env get-value TF_VAR_basileus_runners_subnet_id 2>/dev/null || true)"
+if [ -z "$CURRENT_SUBNET" ]; then
+    echo "  -> Looking up ${SUBNET_NAME} in ${BASILEUS_VNET}..."
+    SUBNET_ID=$(az network vnet subnet show \
+        --resource-group "$BASILEUS_RG" \
+        --vnet-name "$BASILEUS_VNET" \
+        --name "$SUBNET_NAME" \
+        --query id -o tsv 2>/dev/null || true)
+    if [ -n "$SUBNET_ID" ]; then
+        echo "  -> Found subnet: ${SUBNET_ID}"
+        azd env set TF_VAR_basileus_runners_subnet_id "$SUBNET_ID"
+    else
+        echo "  -> WARNING: Basileus subnet not found. Runners will deploy without VNet integration." >&2
+        echo "    Deploy Basileus infra first (azd up in basileus/) or set manually:" >&2
+        echo "    azd env set TF_VAR_basileus_runners_subnet_id <subnet-id>" >&2
+    fi
+else
+    echo "  -> Basileus subnet already set in azd env"
 fi
 
 echo "==> Pre-provisioning checks passed."
