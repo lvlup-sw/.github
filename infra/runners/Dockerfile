@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0-preview
 
 # GitHub Actions runner
-ARG RUNNER_VERSION=2.331.0
+ARG RUNNER_VERSION=2.332.0
 RUN mkdir -p /opt/runner \
     && curl -fsSL https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     | tar xz -C /opt/runner
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Trufflehog CLI (secret scanning — replaces Docker action)
-ARG TRUFFLEHOG_VERSION=3.88.1
+ARG TRUFFLEHOG_VERSION=3.93.6
 RUN curl -sSfL \
       "https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}/trufflehog_${TRUFFLEHOG_VERSION}_linux_amd64.tar.gz" \
       -o /tmp/trufflehog.tar.gz \

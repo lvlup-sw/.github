@@ -28,12 +28,25 @@ fi
 SUBSCRIPTION=$(az account show --query name -o tsv)
 echo "  -> Authenticated (subscription: ${SUBSCRIPTION})"
 
-# --- Bootstrap Terraform state backend ---
-# Read backend config to get expected resource names
+# --- Generate provider.conf.json dynamically (matches basileus pattern) ---
+ENVIRONMENT="${AZURE_ENV_NAME:-dev}"
 BACKEND_CONF="${SCRIPT_DIR}/provider.conf.json"
-RG_STATE=$(python3 -c "import json; print(json.load(open('${BACKEND_CONF}'))['resource_group_name'])")
-SA_NAME=$(python3 -c "import json; print(json.load(open('${BACKEND_CONF}'))['storage_account_name'])")
-CONTAINER=$(python3 -c "import json; print(json.load(open('${BACKEND_CONF}'))['container_name'])")
+if [ ! -f "$BACKEND_CONF" ]; then
+    echo "  -> Generating provider.conf.json for environment '${ENVIRONMENT}'..."
+    cat > "$BACKEND_CONF" <<EOF
+{
+  "resource_group_name": "rg-basileus-runners-tfstate-${ENVIRONMENT}",
+  "storage_account_name": "stbasileusrunstate${ENVIRONMENT}",
+  "container_name": "tfstate",
+  "key": "github-runners.terraform.tfstate"
+}
+EOF
+fi
+
+# --- Bootstrap Terraform state backend ---
+RG_STATE=$(jq -r '.resource_group_name' "$BACKEND_CONF")
+SA_NAME=$(jq -r '.storage_account_name' "$BACKEND_CONF")
+CONTAINER=$(jq -r '.container_name' "$BACKEND_CONF")
 
 echo "  -> Checking Terraform state backend..."
 if az storage account show --name "$SA_NAME" --resource-group "$RG_STATE" &>/dev/null; then

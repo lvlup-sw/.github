@@ -25,10 +25,12 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build and push runner image
+        env:
+          ACR_NAME: ${{ vars.RUNNER_ACR_NAME || 'crbasileusrundev' }}
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
           az acr build \
-            --registry crbasileusrundev \
+            --registry "$ACR_NAME" \
             --image basileus/github-runner:latest \
             --image basileus/github-runner:sha-${SHORT_SHA} \
             --file infra/runners/Dockerfile \
