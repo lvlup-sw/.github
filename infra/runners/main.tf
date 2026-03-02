@@ -111,6 +111,11 @@ resource "azurerm_role_assignment" "acr_pull" {
 
 ################################################################################
 # Key Vault + GitHub PAT Secret
+#
+# The PAT is stored in Key Vault for secure storage. However, the Container
+# App Job references it as a direct secret value (not a KV reference) due to
+# a platform-level issue where the Container Apps control plane cannot resolve
+# Key Vault secrets via user-assigned managed identity.
 ################################################################################
 
 resource "azurerm_key_vault" "runners" {
@@ -236,9 +241,8 @@ resource "azurerm_container_app_job" "github_runner" {
   }
 
   secret {
-    name                = "gh-token"
-    key_vault_secret_id = azurerm_key_vault_secret.github_pat.versionless_id
-    identity            = azurerm_user_assigned_identity.runners.id
+    name  = "gh-token"
+    value = var.github_runner_pat
   }
 
   event_trigger_config {
