@@ -275,8 +275,8 @@ resource "azurerm_container_app_job" "github_runner" {
     container {
       name   = "runner"
       image  = "${azurerm_container_registry.runners.login_server}/basileus/github-runner:${var.runner_image_tag}"
-      cpu    = 2
-      memory = "4Gi"
+      cpu    = 4
+      memory = "8Gi"
 
       env {
         name        = "GITHUB_PAT"
