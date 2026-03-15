@@ -40,7 +40,7 @@ variable "github_owner" {
 variable "github_repos" {
   description = "Comma-separated list of GitHub repositories to monitor for workflow jobs"
   type        = string
-  default     = "basileus,.github,exarchos,valkyrie,bifrost,lvlup-build"
+  default     = "basileus,.github,exarchos,valkyrie,bifrost,lvlup-build,strategos"
 }
 
 variable "runner_image_tag" {
