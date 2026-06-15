@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<coverage line-rate="0.88" branch-rate="0.81" version="1.9" timestamp="0" lines-covered="880" lines-valid="1000" branches-covered="810" branches-valid="1000">
+  <sources>
+    <source>/repo/src</source>
+  </sources>
+  <packages>
+    <package name="Bifrost" line-rate="0.91" branch-rate="0.86">
+      <classes />
+    </package>
+    <package name="Bifrost.Concurrency" line-rate="0.84" branch-rate="0.82">
+      <classes />
+    </package>
+    <package name="Bifrost.Core" line-rate="0.93" branch-rate="0.50">
+      <classes />
+    </package>
+    <package name="Bifrost.HealthChecks" line-rate="0.89" branch-rate="0.85">
+      <classes />
+    </package>
+    <package name="Bifrost.OpenTelemetry" line-rate="0.87" branch-rate="0.83">
+      <classes />
+    </package>
+    <package name="Bifrost.Resilience" line-rate="0.90" branch-rate="0.88">
+      <classes />
+    </package>
+    <package name="Bifrost.Scheduling" line-rate="0.86" branch-rate="0.81">
+      <classes />
+    </package>
+    <package name="Bifrost.Scheduling.Core" line-rate="0.92" branch-rate="0.84">
+      <classes />
+    </package>
+    <package name="Bifrost.Scheduling.Testing" line-rate="0.95" branch-rate="0.90">
+      <classes />
+    </package>
+  </packages>
+</coverage>
