@@ -1,0 +1,120 @@
+# =============================================================================
+# Canary: coverage-gate composite action (DR-2 / Task 4)
+# =============================================================================
+# Chain-specific canary for the `org/gate-action` change. Exercises the
+# in-repo `actions/coverage-gate` action against the committed Cobertura
+# fixtures in scripts/ci/testdata/ on every PR to THIS repo, proving:
+#
+#   (a) DEFAULT-PARITY: at default inputs (gate-mode=aggregate, metrics=line,
+#       threshold=90) the action PASSES the fixture whose aggregate line
+#       coverage is >= 90% — the same verdict the historical aggregate/line
+#       gate produced — and produces a pr-comment.md.
+#   (b) OPT-IN FAILURE: at gate-mode=per-assembly, metrics=line+branch,
+#       threshold=80 the action FAILS the fixture with a seeded sub-threshold
+#       assembly (Bifrost.Core branch-rate 0.50).
+#
+# This is a DEDICATED canary file (not a shared canary) to avoid integration
+# conflicts with other chains in the initiative. It runs only on PRs to this
+# repo (it needs the org runners to resolve the action's sparse-checkout).
+#
+# NOTE: the action's first step sparse-checks-out scripts/ci from
+# lvlup-sw/.github at `shared-ref`. We pin shared-ref to the PR's checked-out
+# commit (github.sha) so the canary exercises THIS PR's gate script, not main.
+# =============================================================================
+
+name: Canary - Coverage Gate Action
+
+on:
+  pull_request:
+    paths:
+      - 'actions/coverage-gate/**'
+      - '.github/workflows/coverage-gate.yml'
+      - '.github/workflows/canary-coverage-gate.yml'
+      - 'scripts/ci/coverage-gate.sh'
+      - 'scripts/ci/testdata/**'
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------------
+  # (a) Default-parity: aggregate/line @ threshold 90 PASSES the >=90% fixture.
+  # The action invocation is NOT continue-on-error, so a job-green here asserts
+  # the gate passed exactly as the default path would.
+  # --------------------------------------------------------------------------
+  default-parity:
+    name: Default parity (aggregate/line @ 90) passes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (provides the local action + fixtures)
+        uses: actions/checkout@v4
+
+      - name: Stage default-parity fixture as the merged report
+        run: |
+          mkdir -p ./coverage-merged
+          cp scripts/ci/testdata/merged-multipackage-pass.cobertura.xml \
+             ./coverage-merged/Cobertura.xml
+
+      - name: Run gate at DEFAULT inputs (aggregate/line, threshold 90)
+        id: gate
+        uses: ./actions/coverage-gate
+        with:
+          # threshold/gate-mode/metrics intentionally OMITTED to exercise the
+          # action's own defaults (90 / aggregate / line) — the default path.
+          coverage-file: ./coverage-merged/Cobertura.xml
+          output-dir: ./coverage-merged
+          shared-ref: ${{ github.sha }}
+
+      - name: Assert PASS verdict + comment produced
+        run: |
+          if [ "${{ steps.gate.outcome }}" != "success" ]; then
+            echo "::error::default-parity expected the gate to PASS but it did not"
+            exit 1
+          fi
+          if [ ! -f ./coverage-merged/pr-comment.md ]; then
+            echo "::error::expected pr-comment.md to be generated"
+            exit 1
+          fi
+          echo "Default-parity PASS recorded. PR comment:"
+          cat ./coverage-merged/pr-comment.md
+
+  # --------------------------------------------------------------------------
+  # (b) Opt-in failure: per-assembly + line+branch @ threshold 80 FAILS the
+  # fixture with the seeded sub-threshold assembly (Bifrost.Core branch 0.50).
+  # The action runs continue-on-error so the job can assert the FAILURE.
+  # --------------------------------------------------------------------------
+  per-assembly-failure:
+    name: Per-assembly line+branch fails seeded sub-threshold assembly
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (provides the local action + fixtures)
+        uses: actions/checkout@v4
+
+      - name: Stage per-assembly fixture (Bifrost.Core branch 0.50)
+        run: |
+          mkdir -p ./coverage-assembly
+          cp scripts/ci/testdata/merged-multipackage.cobertura.xml \
+             ./coverage-assembly/Cobertura.xml
+
+      - name: Run gate at per-assembly / line+branch (threshold 80)
+        id: gate
+        continue-on-error: true
+        uses: ./actions/coverage-gate
+        with:
+          threshold: '80'
+          gate-mode: per-assembly
+          metrics: line+branch
+          coverage-file: ./coverage-assembly/Cobertura.xml
+          output-dir: ./coverage-assembly
+          shared-ref: ${{ github.sha }}
+
+      - name: Assert FAIL verdict + Bifrost.Core marked Fail in comment
+        run: |
+          if [ "${{ steps.gate.outcome }}" != "failure" ]; then
+            echo "::error::per-assembly gate expected to FAIL (Bifrost.Core branch 50%) but outcome was '${{ steps.gate.outcome }}'"
+            exit 1
+          fi
+          echo "Per-assembly FAILURE recorded as expected. PR comment:"
+          cat ./coverage-assembly/pr-comment.md
+          grep -q 'Bifrost.Core' ./coverage-assembly/pr-comment.md
+          echo "Canary OK: opt-in per-assembly+branch gate fails the seeded sub-threshold assembly."
