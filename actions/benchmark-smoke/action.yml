@@ -1,0 +1,59 @@
+# =============================================================================
+# Composite Action: Benchmark Smoke (opt-in)
+# =============================================================================
+# Reproduces bifrost's BenchmarkDotNet dry-run smoke test: a fast `--job Dry`
+# run that proves the benchmarks compile and *execute* (one op per benchmark),
+# without doing a full timed measurement run.
+#
+#   dotnet run --project <bench> -c <configuration> -- --job Dry --filter '<filter>'
+#
+# This is OPT-IN: it does nothing unless a caller explicitly `uses:` it. A repo
+# that never references this action is completely unaffected by its existence
+# (no-op by omission).
+#
+# Reproduces bifrost .github/workflows/ci.yml step:
+#   - "Benchmark smoke test" (ci.yml lines 70-72):
+#       dotnet run --project src/Bifrost.Benchmarks/Bifrost.Benchmarks.csproj \
+#         -c Release -- --job Dry --filter "*"
+#
+# Usage:
+#   - uses: actions/checkout@v4
+#   - uses: actions/setup-dotnet@v4
+#     with:
+#       dotnet-version: '10.0.x'
+#       dotnet-quality: 'preview'
+#   - uses: lvlup-sw/.github/actions/benchmark-smoke@<sha>
+#     with:
+#       benchmark-project: src/Bifrost.Benchmarks/Bifrost.Benchmarks.csproj
+# =============================================================================
+
+name: Benchmark Smoke
+description: >-
+  Opt-in BenchmarkDotNet dry-run smoke test: runs the benchmark project with
+  --job Dry to prove the benchmarks execute (fast, not a timed run). Reproduces
+  bifrost's benchmark smoke step.
+
+inputs:
+  benchmark-project:
+    description: 'Path to the BenchmarkDotNet host .csproj.'
+    required: true
+  filter:
+    description: 'BenchmarkDotNet --filter glob selecting which benchmarks to run.'
+    required: false
+    default: '*'
+  configuration:
+    description: 'Build configuration passed to dotnet run (-c). Benchmarks require Release.'
+    required: false
+    default: 'Release'
+
+runs:
+  using: composite
+  steps:
+    - name: Benchmark smoke test
+      # Fast dry run (--job Dry): one operation per benchmark, just enough to
+      # prove the benchmarks build and execute. Mirrors bifrost ci.yml line 72.
+      shell: bash
+      run: |
+        dotnet run --project "${{ inputs.benchmark-project }}" \
+          -c "${{ inputs.configuration }}" \
+          -- --job Dry --filter "${{ inputs.filter }}"
