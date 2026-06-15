@@ -4,6 +4,13 @@
 # Builds a .NET solution, runs test projects with coverage collection, merges
 # coverage reports, and uploads the result as an artifact.
 #
+# This is a THIN PRESET WRAPPER over the dotnet-build-test composite action
+# (actions/dotnet-build-test). All build/test/coverage logic lives in the
+# action (single source of truth, DR-3); this workflow only owns the
+# workflow-level concerns the action cannot (runs-on/runner, the workflow_call
+# signature). Inputs, defaults, and the tests-passed output are unchanged, so
+# existing consumers (strategos, basileus, DataFerry) need no changes.
+#
 # Usage:
 #   jobs:
 #     test:
@@ -72,103 +79,23 @@ jobs:
     name: Build & Test
     runs-on: ${{ inputs.runner }}
     outputs:
-      tests-passed: ${{ steps.run-tests.outputs.tests-passed }}
+      tests-passed: ${{ steps.build-test.outputs.tests-passed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      # All build/test/coverage logic lives in the dotnet-build-test composite
+      # action (single source of truth, DR-3). This workflow is a thin preset
+      # wrapper over it. The action is referenced by its full org-repo path so
+      # GitHub resolves it without a manual checkout; @main is replaced with the
+      # release tag/SHA when the org cuts a version (DR-6).
+      - name: Build & test
+        id: build-test
+        uses: lvlup-sw/.github/actions/dotnet-build-test@main
         with:
+          solution-path: ${{ inputs.solution-path }}
+          test-project-patterns: ${{ inputs.test-project-patterns }}
+          skip-patterns: ${{ inputs.skip-patterns }}
+          coverage-filters: ${{ inputs.coverage-filters }}
           dotnet-version: ${{ inputs.dotnet-version }}
           dotnet-quality: ${{ inputs.dotnet-quality }}
-
-      - name: Restore dependencies
-        run: dotnet restore ${{ inputs.solution-path }}
-
-      - name: Build
-        run: dotnet build ${{ inputs.solution-path }} --no-restore --configuration Release
-
-      - name: Run tests with coverage
-        id: run-tests
-        run: |
-          mkdir -p ./TestResults
-          failed=0
-
-          while IFS= read -r pattern; do
-            [[ -z "$pattern" ]] && continue
-            for proj in $pattern; do
-              # Skip if glob didn't expand (no matching files)
-              [[ ! -f "$proj" ]] && continue
-
-              # Check skip patterns
-              skip=false
-              while IFS= read -r skip_pat; do
-                [[ -z "$skip_pat" ]] && continue
-                if [[ "$proj" == $skip_pat ]]; then
-                  skip=true
-                  break
-                fi
-              done <<< "${{ inputs.skip-patterns }}"
-
-              if [[ "$skip" == "true" ]]; then
-                echo "Skipping: $proj"
-                continue
-              fi
-
-              projname=$(basename "$proj" .csproj)
-              coverage_path="${GITHUB_WORKSPACE}/TestResults/${projname}.cobertura.xml"
-              echo "Running tests: $proj"
-
-              if ! dotnet run --project "$proj" --configuration Release -- \
-                --coverage \
-                --coverage-output-format cobertura \
-                --coverage-output "$coverage_path"; then
-                echo "::error::Tests failed for $proj"
-                failed=1
-              fi
-            done
-          done <<< "${{ inputs.test-project-patterns }}"
-
-          if [[ "$failed" -eq 0 ]]; then
-            echo "tests-passed=true" >> $GITHUB_OUTPUT
-          else
-            echo "tests-passed=false" >> $GITHUB_OUTPUT
-          fi
-
-          exit $failed
-
-      - name: Merge coverage reports
-        if: always()
-        run: |
-          dotnet tool install -g dotnet-reportgenerator-globaltool || true
-          export PATH="$PATH:$HOME/.dotnet/tools"
-
-          if ls ./TestResults/*.cobertura.xml 1> /dev/null 2>&1; then
-            FILTER_ARG=""
-            if [[ -n "${{ inputs.coverage-filters }}" ]]; then
-              FILTER_ARG="-assemblyfilters:${{ inputs.coverage-filters }}"
-            fi
-
-            reportgenerator \
-              -reports:"./TestResults/*.cobertura.xml" \
-              -targetdir:"./TestResults" \
-              -reporttypes:"Cobertura" \
-              $FILTER_ARG \
-              -verbosity:Warning
-
-            if [ -f "./TestResults/Cobertura.xml" ]; then
-              cp ./TestResults/Cobertura.xml ./TestResults/coverage.cobertura.xml
-            fi
-          else
-            echo "::warning::No coverage files found in ./TestResults/"
-          fi
-
-      - name: Upload coverage reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: ./TestResults/coverage.cobertura.xml
-          retention-days: 7
-          if-no-files-found: warn

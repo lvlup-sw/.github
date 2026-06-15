@@ -5,6 +5,13 @@
 # requests. Designed to run AFTER build-and-test.yml has uploaded the
 # 'coverage-reports' artifact containing Cobertura XML files.
 #
+# This workflow is a thin PRESET over the `actions/coverage-gate` composite
+# action (single source of truth — the gate logic lives in the action and the
+# shared scripts/ci/coverage-gate.sh). Its inputs/outputs/defaults are
+# UNCHANGED from the pre-refactor workflow, so the existing consumers
+# (strategos/basileus/DataFerry) need no change and keep identical
+# aggregate/line behavior at default inputs.
+#
 # Usage:
 #   jobs:
 #     coverage:
@@ -15,7 +22,7 @@
 # Behavior:
 #   - Downloads coverage artifacts from the calling workflow
 #   - Merges reports using ReportGenerator
-#   - Runs coverage-gate.sh to enforce the threshold
+#   - Invokes the coverage-gate composite action to enforce the threshold
 #   - Posts or updates a PR comment with the coverage summary
 # =============================================================================
 
@@ -39,6 +46,16 @@ on:
         required: false
         type: string
         default: 'self-hosted'
+      gate-mode:
+        description: 'Gate mode: aggregate (default), per-project, or per-assembly. Pass-through to the coverage-gate action.'
+        required: false
+        type: string
+        default: 'aggregate'
+      metrics:
+        description: 'Aggregate-mode metric: line (default) or line+branch. Pass-through to the coverage-gate action.'
+        required: false
+        type: string
+        default: 'line'
 
 jobs:
   coverage-gate:
@@ -47,13 +64,6 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - name: Checkout shared scripts
-        uses: actions/checkout@v4
-        with:
-          repository: lvlup-sw/.github
-          sparse-checkout: scripts/ci
-          path: .shared
-
       - name: Download coverage artifacts
         uses: actions/download-artifact@v4
         with:
@@ -77,27 +87,13 @@ jobs:
             -targetdir:"./coverage-merged" \
             -reporttypes:"Cobertura;TextSummary"
 
-      - name: Run coverage gate
-        id: coverage
-        run: |
-          chmod +x .shared/scripts/ci/coverage-gate.sh
-          .shared/scripts/ci/coverage-gate.sh \
-            --coverage-file ./coverage-merged/Cobertura.xml \
-            --threshold ${{ inputs.coverage-threshold }} \
-            --output-dir ./coverage-merged
-
-      - name: Post PR comment
-        if: always() && github.event.pull_request.number
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -f "./coverage-merged/pr-comment.md" ] && command -v gh &>/dev/null; then
-            gh pr comment ${{ github.event.pull_request.number }} \
-              --repo ${{ github.repository }} \
-              --body-file ./coverage-merged/pr-comment.md \
-              --edit-last || \
-            gh pr comment ${{ github.event.pull_request.number }} \
-              --repo ${{ github.repository }} \
-              --body-file ./coverage-merged/pr-comment.md
-          fi
+      - name: Coverage gate
+        uses: lvlup-sw/.github/actions/coverage-gate@main
+        with:
+          threshold: ${{ inputs.coverage-threshold }}
+          gate-mode: ${{ inputs.gate-mode }}
+          metrics: ${{ inputs.metrics }}
+          coverage-file: ./coverage-merged/Cobertura.xml
+          report-dir: ./coverage-reports
+          output-dir: ./coverage-merged
+          github-token: ${{ github.token }}

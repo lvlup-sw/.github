@@ -1,0 +1,112 @@
+# =============================================================================
+# Composite Action: AOT Smoke (opt-in)
+# =============================================================================
+# Reproduces bifrost's NativeAOT publish-and-run smoke test (bifrost DR-13):
+#   1. install the native toolchain (clang + zlib dev headers)
+#   2. `dotnet publish <project> -c <configuration> /p:PublishAot=true -o <out>`
+#   3. run the produced native binary; a non-zero exit FAILS the step (and build).
+#
+# This is OPT-IN: it does nothing unless a caller explicitly `uses:` it. A repo
+# that never references this action is completely unaffected by its existence
+# (no-op by omission). PublishAot=true is passed on the command line — never
+# hardcoded in the project — so a regular `dotnet build` needs no native
+# toolchain and runs on any developer machine (mirrors bifrost's design).
+#
+# Reproduces bifrost .github/workflows/ci.yml steps:
+#   - "AOT smoke — install native toolchain"     (ci.yml lines 74-76)
+#   - "AOT smoke — publish native binary (DR-13)" (ci.yml lines 78-87)
+#   - "AOT smoke — run native binary"             (ci.yml lines 89-92)
+#
+# Usage:
+#   - uses: actions/checkout@v4
+#   - uses: actions/setup-dotnet@v4
+#     with:
+#       dotnet-version: '10.0.x'
+#       dotnet-quality: 'preview'
+#   - uses: lvlup-sw/.github/actions/aot-smoke@<sha>
+#     with:
+#       project-path: samples/Bifrost.Scheduling.AotSmoke/Bifrost.Scheduling.AotSmoke.csproj
+# =============================================================================
+
+name: AOT Smoke
+description: >-
+  Opt-in NativeAOT publish-and-run smoke test: installs clang/zlib, publishes a
+  project with PublishAot=true, and runs the produced native binary (fails on a
+  non-zero exit). Reproduces bifrost's DR-13 AOT gate.
+
+inputs:
+  project-path:
+    description: 'Path to the .csproj to publish as a NativeAOT native binary.'
+    required: true
+  configuration:
+    description: 'Build configuration passed to dotnet publish (-c).'
+    required: false
+    default: 'Release'
+  output-dir:
+    description: 'Directory the native binary is published to (-o).'
+    required: false
+    default: './aot-publish'
+  binary-name:
+    description: >-
+      Name of the produced native executable (defaults to the project file name
+      without its .csproj extension, matching the default .NET AssemblyName).
+      Override only if the project sets a custom <AssemblyName>.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: AOT smoke — install native toolchain
+      # NativeAOT publish requires clang and zlib-dev on Ubuntu.
+      # Use sudo when available (GitHub-hosted runners) but fall back to running
+      # apt-get directly when sudo is absent (self-hosted/root containers, where
+      # `sudo` may not be installed). (bifrost ci.yml line 76)
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=; fi
+        $SUDO apt-get update
+        $SUDO apt-get install -y clang zlib1g-dev
+
+    - name: AOT smoke — publish native binary (DR-13)
+      # Publishes the target project as a fully ahead-of-time compiled native
+      # binary. PublishAot=true is passed on the command line rather than
+      # hardcoded in the project so a regular `dotnet build` of the solution
+      # does not require the native toolchain. (bifrost ci.yml lines 83-87)
+      shell: bash
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        dotnet publish "$PROJECT_PATH" \
+          -c "$CONFIGURATION" \
+          /p:PublishAot=true \
+          -o "$OUTPUT_DIR"
+
+    - name: AOT smoke — run native binary
+      # The binary exits 0 on success, non-zero on failure. A non-zero exit here
+      # fails the build, which is the intended behaviour for DR-13 gating.
+      # (bifrost ci.yml line 92 runs ./aot-publish/Bifrost.Scheduling.AotSmoke)
+      shell: bash
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        BINARY_NAME: ${{ inputs.binary-name }}
+      run: |
+        binary="$BINARY_NAME"
+        if [ -z "$binary" ]; then
+          # Default to the project file name without its .csproj extension,
+          # which equals the default .NET AssemblyName (== native binary name).
+          base="$(basename "$PROJECT_PATH")"
+          binary="${base%.csproj}"
+        fi
+        exe="$OUTPUT_DIR/${binary}"
+        if [ ! -x "$exe" ]; then
+          echo "::error::AOT native binary not found or not executable: $exe"
+          echo "Published contents of $OUTPUT_DIR:"
+          ls -la "$OUTPUT_DIR" || true
+          exit 1
+        fi
+        "$exe"
