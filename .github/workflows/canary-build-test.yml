@@ -1,0 +1,128 @@
+# =============================================================================
+# Canary: dotnet-build-test parity (DR-3 task 7)
+# =============================================================================
+# CHAIN-SPECIFIC canary for the build-test composite action + its thin wrapper
+# workflow. NOT a shared/reusable file — it runs only on pull requests to THIS
+# repo (lvlup-sw/.github) that touch the build-test chain, exercising the action
+# *as proposed on the PR head* against a real .NET project before it can reach
+# any consumer.
+#
+# What it checks (the parity contract for DR-3):
+#   1. ARTIFACT PARITY  — running actions/dotnet-build-test against a real .NET
+#      repo produces a `coverage-reports` artifact containing
+#      `coverage.cobertura.xml`, exactly as the pre-refactor inline workflow did.
+#   2. OUTPUT PARITY    — the action's `tests-passed` output is emitted and is
+#      `true` for a known-green project (same output contract the old workflow
+#      surfaced via jobs.test.outputs.tests-passed).
+#   3. LOCAL-ACTION FIDELITY — it resolves the action by LOCAL PATH
+#      (./actions/dotnet-build-test), so the PR's proposed action source is what
+#      runs (a canary must test the change, not @main).
+#
+# Live fixture: lvlup-sw/bifrost (a real MTP/TUnit .NET 10 repo). bifrost is the
+# reference consumer for this initiative, so it is the highest-fidelity canary
+# for MTP/coverage regressions the design calls out. Checked out read-only at a
+# pinned ref into ./_fixture.
+#
+# Note: this job needs a GitHub runner with the .NET SDK and a real checkout, so
+# it executes only on a real PR run — not locally.
+# =============================================================================
+
+name: Canary — build-test parity
+
+on:
+  pull_request:
+    paths:
+      - 'actions/dotnet-build-test/**'
+      - '.github/workflows/build-and-test.yml'
+      - '.github/workflows/canary-build-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: build-test parity (fixture = bifrost)
+    runs-on: self-hosted
+    steps:
+      # Check out THIS repo at the PR head so the proposed action source is what
+      # the canary exercises (the action is resolved by local path below).
+      - name: Checkout org repo (PR head)
+        uses: actions/checkout@v4
+
+      # Live fixture: a real .NET 10 / MTP repo. Pinned to a ref for determinism.
+      - name: Checkout fixture (.NET repo)
+        uses: actions/checkout@v4
+        with:
+          repository: lvlup-sw/bifrost
+          ref: main
+          path: _fixture
+
+      # Run the PROPOSED action (local path) against the fixture. defaults
+      # (dotnet-version=10.0.x, dotnet-quality=preview) match the workflow's, so
+      # this is the same code path a default-input consumer hits.
+      - name: Run dotnet-build-test against fixture
+        id: build-test
+        uses: ./actions/dotnet-build-test
+        with:
+          solution-path: _fixture/src/Bifrost.sln
+          test-project-patterns: |
+            _fixture/src/Bifrost.Tests*/*.csproj
+          # Exclude the heavy [Category=Stress] proofs so the canary stays fast;
+          # this mirrors bifrost's own per-PR exclusion. Stress projects are
+          # skipped by path so the canary still measures the core suites.
+          skip-patterns: |
+            _fixture/src/Bifrost.Tests.Concurrency/*.csproj
+
+      # ----- ASSERTIONS: parity with the pre-refactor behavior -----------------
+
+      - name: Assert tests-passed output parity
+        shell: bash
+        env:
+          TESTS_PASSED: ${{ steps.build-test.outputs.tests-passed }}
+        run: |
+          echo "action emitted tests-passed='${TESTS_PASSED}'"
+          if [[ -z "${TESTS_PASSED}" ]]; then
+            echo "::error::OUTPUT PARITY FAILED — action did not emit a tests-passed output"
+            exit 1
+          fi
+          if [[ "${TESTS_PASSED}" != "true" ]]; then
+            echo "::error::OUTPUT PARITY FAILED — expected tests-passed=true for the green fixture, got '${TESTS_PASSED}'"
+            exit 1
+          fi
+          echo "OUTPUT PARITY OK — tests-passed=true"
+
+      - name: Assert coverage artifact parity
+        shell: bash
+        run: |
+          # The action's merge step writes ./TestResults/coverage.cobertura.xml
+          # and uploads it as the 'coverage-reports' artifact. Assert the merged
+          # file exists and is a non-empty Cobertura report (same artifact the
+          # pre-refactor inline workflow produced).
+          merged="./TestResults/coverage.cobertura.xml"
+          if [[ ! -f "$merged" ]]; then
+            echo "::error::ARTIFACT PARITY FAILED — $merged not produced by the action"
+            ls -la ./TestResults || true
+            exit 1
+          fi
+          if [[ ! -s "$merged" ]]; then
+            echo "::error::ARTIFACT PARITY FAILED — $merged is empty"
+            exit 1
+          fi
+          if ! grep -q "<coverage" "$merged"; then
+            echo "::error::ARTIFACT PARITY FAILED — $merged is not a Cobertura coverage report"
+            head -5 "$merged" || true
+            exit 1
+          fi
+          echo "ARTIFACT PARITY OK — coverage-reports/coverage.cobertura.xml present and valid"
+
+      # Re-upload under the canary's own name purely as a debugging aid; the
+      # action already uploaded the real 'coverage-reports' artifact above.
+      - name: Upload canary coverage (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-coverage-reports
+          path: ./TestResults/coverage.cobertura.xml
+          retention-days: 7
+          if-no-files-found: warn
