@@ -77,11 +77,17 @@ jobs:
           solution-path: _fixture/src/Bifrost.sln
           test-project-patterns: |
             _fixture/src/Bifrost.Tests*/*.csproj
-          # Exclude the heavy [Category=Stress] proofs so the canary stays fast;
-          # this mirrors bifrost's own per-PR exclusion. Stress projects are
-          # skipped by path so the canary still measures the core suites.
+          # Skip test projects the canary must not gate on:
+          #  - Bifrost.Tests.Concurrency: heavy [Category=Stress] proofs (slow).
+          #  - Bifrost.Tests: bifrost's own suite is timing-flaky (intermittent
+          #    assertion / TimeoutException failures, reproduced at a pinned SHA
+          #    on an isolated runner). It is bifrost's test health, not the org
+          #    dotnet-build-test action under test here. The stable
+          #    Bifrost.Tests.Scheduling project still runs through the action,
+          #    exercising the real MTP loop + coverage-artifact path.
           skip-patterns: |
             _fixture/src/Bifrost.Tests.Concurrency/*.csproj
+            _fixture/src/Bifrost.Tests/*.csproj
 
       # ----- ASSERTIONS: parity with the pre-refactor behavior -----------------
 
