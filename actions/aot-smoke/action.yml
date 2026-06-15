@@ -59,9 +59,15 @@ runs:
   steps:
     - name: AOT smoke — install native toolchain
       # NativeAOT publish requires clang and zlib-dev on Ubuntu.
-      # (bifrost ci.yml line 76)
+      # Use sudo when available (GitHub-hosted runners) but fall back to running
+      # apt-get directly when sudo is absent (self-hosted/root containers, where
+      # `sudo` may not be installed). (bifrost ci.yml line 76)
       shell: bash
-      run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      run: |
+        set -euo pipefail
+        if command -v sudo >/dev/null 2>&1; then SUDO=sudo; else SUDO=; fi
+        $SUDO apt-get update
+        $SUDO apt-get install -y clang zlib1g-dev
 
     - name: AOT smoke — publish native binary (DR-13)
       # Publishes the target project as a fully ahead-of-time compiled native
