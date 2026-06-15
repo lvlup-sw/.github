@@ -62,16 +62,24 @@ runs:
 
     - name: Restore dependencies
       shell: bash
-      run: dotnet restore ${{ inputs.solution-path }}
+      env:
+        SOLUTION_PATH: ${{ inputs.solution-path }}
+      run: dotnet restore "$SOLUTION_PATH"
 
     - name: Build
       shell: bash
-      run: dotnet build ${{ inputs.solution-path }} --no-restore --configuration Release
+      env:
+        SOLUTION_PATH: ${{ inputs.solution-path }}
+      run: dotnet build "$SOLUTION_PATH" --no-restore --configuration Release
 
     - name: Run tests with coverage
       id: run-tests
       shell: bash
+      env:
+        TEST_PROJECT_PATTERNS: ${{ inputs.test-project-patterns }}
+        SKIP_PATTERNS: ${{ inputs.skip-patterns }}
       run: |
+        set -uo pipefail
         mkdir -p ./TestResults
         failed=0
 
@@ -89,7 +97,7 @@ runs:
                 skip=true
                 break
               fi
-            done <<< "${{ inputs.skip-patterns }}"
+            done <<< "$SKIP_PATTERNS"
 
             if [[ "$skip" == "true" ]]; then
               echo "Skipping: $proj"
@@ -108,7 +116,7 @@ runs:
               failed=1
             fi
           done
-        done <<< "${{ inputs.test-project-patterns }}"
+        done <<< "$TEST_PROJECT_PATTERNS"
 
         if [[ "$failed" -eq 0 ]]; then
           echo "tests-passed=true" >> $GITHUB_OUTPUT
@@ -121,14 +129,16 @@ runs:
     - name: Merge coverage reports
       if: always()
       shell: bash
+      env:
+        COVERAGE_FILTERS: ${{ inputs.coverage-filters }}
       run: |
         dotnet tool install -g dotnet-reportgenerator-globaltool || true
         export PATH="$PATH:$HOME/.dotnet/tools"
 
         if ls ./TestResults/*.cobertura.xml 1> /dev/null 2>&1; then
           FILTER_ARG=""
-          if [[ -n "${{ inputs.coverage-filters }}" ]]; then
-            FILTER_ARG="-assemblyfilters:${{ inputs.coverage-filters }}"
+          if [[ -n "$COVERAGE_FILTERS" ]]; then
+            FILTER_ARG="-assemblyfilters:$COVERAGE_FILTERS"
           fi
 
           reportgenerator \
