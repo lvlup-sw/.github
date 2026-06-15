@@ -56,6 +56,10 @@ jobs:
         with:
           repository: lvlup-sw/bifrost
           ref: main
+          # bifrost is private; the repo-scoped GITHUB_TOKEN cannot read it.
+          # PROJECT_TOKEN is the org-wide PAT used for cross-repo access
+          # (see iteration-manager.yml / project-setup.yml).
+          token: ${{ secrets.PROJECT_TOKEN }}
           path: _fixture
 
       # Run the PROPOSED action (local path) against the fixture. defaults
