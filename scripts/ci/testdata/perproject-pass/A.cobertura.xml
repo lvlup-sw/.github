@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<coverage line-rate="0.90" branch-rate="0.90" version="1.9" timestamp="0" lines-covered="90" lines-valid="100" branches-covered="90" branches-valid="100">
+  <packages>
+    <package name="Project.A" line-rate="0.90" branch-rate="0.90">
+      <classes />
+    </package>
+  </packages>
+</coverage>

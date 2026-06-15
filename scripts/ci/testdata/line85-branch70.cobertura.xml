@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<coverage line-rate="0.85" branch-rate="0.70" version="1.9" timestamp="0" lines-covered="85" lines-valid="100" branches-covered="70" branches-valid="100">
+  <packages>
+    <package name="Sample.Package" line-rate="0.85" branch-rate="0.70">
+      <classes />
+    </package>
+  </packages>
+</coverage>
