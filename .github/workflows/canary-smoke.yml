@@ -43,7 +43,10 @@ jobs:
   # ---------------------------------------------------------------------------
   smoke-actions:
     name: Invoke aot-smoke + benchmark-smoke (against bifrost)
-    runs-on: self-hosted
+    # GitHub-hosted Ubuntu (like bifrost's own CI runner): has sudo + apt for the
+    # NativeAOT clang toolchain, and dedicated resources. The org's self-hosted
+    # runners are unprivileged (no sudo/apt) so cannot install the toolchain.
+    runs-on: ubuntu-latest
     steps:
       # The composite actions are referenced locally (uses: ./actions/...), so
       # THIS repo must be checked out at the workspace root.
@@ -57,6 +60,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: lvlup-sw/bifrost
+          # Pinned to a bifrost SHA for a deterministic fixture (this canary's
+          # stated intent); bump deliberately when refreshing the fixture.
+          ref: f64cabdbcfadd64bf497958caedd4a330aed9dbc
           # bifrost is private; the repo-scoped GITHUB_TOKEN cannot read it.
           # PROJECT_TOKEN is the org-wide PAT used for cross-repo access
           # (see iteration-manager.yml / project-setup.yml).
