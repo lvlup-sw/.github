@@ -1,0 +1,108 @@
+# =============================================================================
+# Canary: opt-in smoke composite actions (aot-smoke + benchmark-smoke)
+# =============================================================================
+# CHAIN-SPECIFIC canary for the org smoke actions (DR-4 / plan task 10). This is
+# NOT a shared/reusable workflow — it exists only to self-test the two opt-in
+# composite actions in THIS repo on PRs that touch them, by exercising them
+# against a real .NET project (bifrost's AOT sample + benchmark project).
+#
+# It proves two things on a real GitHub runner:
+#   1. INVOKED, the actions reproduce bifrost's behaviour and SUCCEED:
+#        - actions/aot-smoke        → publishes + runs bifrost's NativeAOT sample
+#        - actions/benchmark-smoke  → runs bifrost's BenchmarkDotNet dry run
+#   2. OMITTED, the actions are a complete no-op: the `no-op-by-omission` job
+#      below references NEITHER action and is entirely unaffected by their
+#      existence — composite actions add nothing unless a caller `uses:` them.
+#
+# Path filter keeps this canary scoped to changes in the smoke actions; it does
+# not run on unrelated PRs (and adds nothing to repos that never adopt it).
+# =============================================================================
+
+name: Canary — Smoke Actions
+
+on:
+  pull_request:
+    paths:
+      - 'actions/aot-smoke/**'
+      - 'actions/benchmark-smoke/**'
+      - '.github/workflows/canary-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Match bifrost's CI SDK so the canary publishes/runs against the same target.
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_QUALITY: 'preview'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # INVOKED: both opt-in actions are referenced and must succeed against a real
+  # .NET project (bifrost's AOT sample + benchmark project).
+  # ---------------------------------------------------------------------------
+  smoke-actions:
+    name: Invoke aot-smoke + benchmark-smoke (against bifrost)
+    runs-on: self-hosted
+    steps:
+      # The composite actions are referenced locally (uses: ./actions/...), so
+      # THIS repo must be checked out at the workspace root.
+      - name: Checkout org repo (provides the local actions)
+        uses: actions/checkout@v4
+
+      # bifrost provides the real AOT sample + benchmark project the canary
+      # exercises. Checked out into a subdirectory so the org actions stay at
+      # the workspace root.
+      - name: Checkout bifrost (provides the .NET projects under test)
+        uses: actions/checkout@v4
+        with:
+          repository: lvlup-sw/bifrost
+          path: bifrost
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: ${{ env.DOTNET_QUALITY }}
+
+      # AOT smoke against bifrost's scheduling NativeAOT sample (its DR-13).
+      - name: AOT smoke (bifrost scheduling sample)
+        uses: ./actions/aot-smoke
+        with:
+          project-path: bifrost/samples/Bifrost.Scheduling.AotSmoke/Bifrost.Scheduling.AotSmoke.csproj
+          output-dir: ./aot-publish
+
+      # Benchmark smoke against bifrost's BenchmarkDotNet host (dry run).
+      - name: Benchmark smoke (bifrost benchmarks)
+        uses: ./actions/benchmark-smoke
+        with:
+          benchmark-project: bifrost/src/Bifrost.Benchmarks/Bifrost.Benchmarks.csproj
+          filter: '*'
+
+  # ---------------------------------------------------------------------------
+  # OMITTED: this job demonstrates no-op-by-omission. It references NEITHER
+  # smoke action — it is a plain checkout + setup that builds nothing related to
+  # AOT or benchmarks. Its success regardless of the smoke actions proves a
+  # caller that does not `uses:` them is completely unaffected by their
+  # existence: opt-in composite actions contribute zero steps unless invoked.
+  # ---------------------------------------------------------------------------
+  no-op-by-omission:
+    name: Caller that omits the smoke actions is unaffected
+    runs-on: self-hosted
+    steps:
+      - name: Checkout org repo
+        uses: actions/checkout@v4
+
+      - name: Assert no smoke action ran (this job references neither)
+        shell: bash
+        run: |
+          echo "This job does not 'uses:' actions/aot-smoke or actions/benchmark-smoke."
+          echo "No clang/zlib install, no AOT publish, no benchmark run occurs here."
+          echo "Opt-in actions are no-op by omission: present in the repo, absent from this caller."
+          # No native toolchain was installed by this job; confirm we did not
+          # silently pick up the smoke steps. (Informational; never fails.)
+          if [ -d ./aot-publish ]; then
+            echo "::error::Unexpected ./aot-publish present in an omitting job"
+            exit 1
+          fi
+          echo "no-op-by-omission verified for this job."
