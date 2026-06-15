@@ -69,30 +69,38 @@ runs:
       # hardcoded in the project so a regular `dotnet build` of the solution
       # does not require the native toolchain. (bifrost ci.yml lines 83-87)
       shell: bash
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
       run: |
-        dotnet publish "${{ inputs.project-path }}" \
-          -c "${{ inputs.configuration }}" \
+        dotnet publish "$PROJECT_PATH" \
+          -c "$CONFIGURATION" \
           /p:PublishAot=true \
-          -o "${{ inputs.output-dir }}"
+          -o "$OUTPUT_DIR"
 
     - name: AOT smoke — run native binary
       # The binary exits 0 on success, non-zero on failure. A non-zero exit here
       # fails the build, which is the intended behaviour for DR-13 gating.
       # (bifrost ci.yml line 92 runs ./aot-publish/Bifrost.Scheduling.AotSmoke)
       shell: bash
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        BINARY_NAME: ${{ inputs.binary-name }}
       run: |
-        binary="${{ inputs.binary-name }}"
+        binary="$BINARY_NAME"
         if [ -z "$binary" ]; then
           # Default to the project file name without its .csproj extension,
           # which equals the default .NET AssemblyName (== native binary name).
-          base="$(basename "${{ inputs.project-path }}")"
+          base="$(basename "$PROJECT_PATH")"
           binary="${base%.csproj}"
         fi
-        exe="${{ inputs.output-dir }}/${binary}"
+        exe="$OUTPUT_DIR/${binary}"
         if [ ! -x "$exe" ]; then
           echo "::error::AOT native binary not found or not executable: $exe"
-          echo "Published contents of ${{ inputs.output-dir }}:"
-          ls -la "${{ inputs.output-dir }}" || true
+          echo "Published contents of $OUTPUT_DIR:"
+          ls -la "$OUTPUT_DIR" || true
           exit 1
         fi
         "$exe"
