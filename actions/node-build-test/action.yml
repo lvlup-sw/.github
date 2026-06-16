@@ -1,0 +1,208 @@
+# =============================================================================
+# Composite Action: Node Build & Test with Coverage  (TS parity with C#, DR-T1)
+# =============================================================================
+# The TypeScript counterpart to `dotnet-build-test`: install → typecheck →
+# (opt-in) lint → vitest with coverage → emit ONE merged Cobertura → upload the
+# `coverage-reports` artifact. It deliberately produces the SAME artifact
+# contract as the C# action so the language-agnostic `coverage-gate` action
+# consumes it unchanged (no TS-native gate; no .NET ReportGenerator).
+#
+# Package manager is auto-detected from the lockfile (npm / pnpm / bun); pnpm via
+# corepack and bun via `npm i -g bun`, so the action stays self-contained (only
+# actions/setup-node + actions/checkout + actions/upload-artifact, all pinned and
+# Dependabot-managed). Lint is opt-in (default off). The merged report is written
+# by the shared, unit-tested scripts/ci/merge-cobertura.mjs.
+#
+# Usage (compose with the gate in one job):
+#   - uses: actions/checkout@v4
+#   - uses: lvlup-sw/.github/actions/node-build-test@v1.1
+#     with:
+#       working-directory: .
+#   - uses: lvlup-sw/.github/actions/coverage-gate@v1.1
+#     with:
+#       coverage-file: ./coverage-reports/Cobertura.xml
+#       shared-ref: v1.1
+# =============================================================================
+
+name: 'node-build-test'
+description: >-
+  Install, typecheck, optionally lint, and run vitest with coverage for a TS/JS
+  project; emit one merged Cobertura and upload the coverage-reports artifact.
+
+inputs:
+  working-directory:
+    description: 'Directory to run in (the package/workspace root).'
+    required: false
+    default: '.'
+  node-version:
+    description: 'Node.js version for actions/setup-node.'
+    required: false
+    default: 'lts/*'
+  package-manager:
+    description: 'auto (detect from lockfile), npm, pnpm, or bun.'
+    required: false
+    default: 'auto'
+  install-command:
+    description: 'Override the install command. Empty = derived from the detected PM (frozen install).'
+    required: false
+    default: ''
+  test-command:
+    description: 'Test command (coverage flags are appended by the action). Default runs the whole suite.'
+    required: false
+    default: 'vitest run'
+  lint-command:
+    description: 'Opt-in lint command (e.g. "eslint ."); skipped when empty.'
+    required: false
+    default: ''
+  typecheck:
+    description: 'Run `tsc --noEmit` before tests (true/false).'
+    required: false
+    default: 'true'
+  coverage-provider:
+    description: 'vitest coverage provider: v8 (default) or istanbul (instrumented TSX/JSX fallback).'
+    required: false
+    default: 'v8'
+  shared-ref:
+    description: 'Ref of lvlup-sw/.github to sparse-checkout scripts/ci (the merge helper) from. Pin to a SHA/tag.'
+    required: false
+    default: 'main'
+
+outputs:
+  tests-passed:
+    description: 'Whether the test run passed.'
+    value: ${{ steps.test.outputs.tests-passed }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Detect package manager
+      id: detect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PM_INPUT: ${{ inputs.package-manager }}
+      run: |
+        set -euo pipefail
+        pm="$PM_INPUT"
+        if [[ "$pm" == "auto" ]]; then
+          if [[ -f bun.lockb || -f bun.lock ]]; then pm=bun
+          elif [[ -f pnpm-lock.yaml ]]; then pm=pnpm
+          else pm=npm; fi
+        fi
+        echo "pm=$pm" >> "$GITHUB_OUTPUT"
+        echo "Detected package manager: $pm"
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PM: ${{ steps.detect.outputs.pm }}
+        INSTALL_CMD: ${{ inputs.install-command }}
+      run: |
+        set -euo pipefail
+        case "$PM" in
+          pnpm) corepack enable && corepack prepare pnpm@latest --activate ;;
+          bun)  npm install -g bun ;;
+        esac
+        if [[ -n "$INSTALL_CMD" ]]; then
+          # shellcheck disable=SC2086
+          eval "$INSTALL_CMD"
+        else
+          case "$PM" in
+            npm)  if [[ -f package-lock.json ]]; then npm ci; else npm install; fi ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            bun)  bun install --frozen-lockfile ;;
+          esac
+        fi
+
+    - name: Typecheck
+      if: ${{ inputs.typecheck == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PM: ${{ steps.detect.outputs.pm }}
+      run: |
+        set -euo pipefail
+        case "$PM" in
+          npm)  npx --no-install tsc --noEmit ;;
+          pnpm) pnpm exec tsc --noEmit ;;
+          bun)  bunx tsc --noEmit ;;
+        esac
+
+    - name: Lint (opt-in)
+      if: ${{ inputs.lint-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LINT_CMD: ${{ inputs.lint-command }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086
+        eval "$LINT_CMD"
+
+    - name: Test with coverage
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PM: ${{ steps.detect.outputs.pm }}
+        TEST_CMD: ${{ inputs.test-command }}
+        COVERAGE_PROVIDER: ${{ inputs.coverage-provider }}
+      run: |
+        set -uo pipefail
+        cov="--coverage --coverage.provider=$COVERAGE_PROVIDER --coverage.reporter=cobertura --coverage.reporter=text-summary"
+        # shellcheck disable=SC2086
+        case "$PM" in
+          npm)  npx --no-install $TEST_CMD $cov ;;
+          pnpm) pnpm exec $TEST_CMD $cov ;;
+          bun)  bunx $TEST_CMD $cov ;;
+        esac
+        rc=$?
+        if [[ $rc -eq 0 ]]; then
+          echo "tests-passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "tests-passed=false" >> "$GITHUB_OUTPUT"
+        fi
+        exit $rc
+
+    - name: Checkout shared CI scripts (merge helper)
+      if: always()
+      uses: actions/checkout@v4
+      with:
+        repository: lvlup-sw/.github
+        ref: ${{ inputs.shared-ref }}
+        sparse-checkout: scripts/ci
+        # Distinct from coverage-gate's `.shared` so both can run in one job.
+        path: .nbt-shared
+
+    - name: Merge coverage into one Cobertura
+      if: always()
+      shell: bash
+      env:
+        WORKDIR: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # vitest/istanbul writes <reportsDir>/cobertura-coverage.xml (default ./coverage).
+        mapfile -t files < <(find "$WORKDIR" -path '*/node_modules' -prune -o -name 'cobertura-coverage.xml' -print)
+        if [[ ${#files[@]} -eq 0 ]]; then
+          echo "::warning::node-build-test: no cobertura-coverage.xml found under $WORKDIR"
+          exit 0
+        fi
+        mkdir -p "${GITHUB_WORKSPACE}/coverage-reports"
+        node "${GITHUB_WORKSPACE}/.nbt-shared/scripts/ci/merge-cobertura.mjs" \
+          "${files[@]}" --out "${GITHUB_WORKSPACE}/coverage-reports/Cobertura.xml"
+        echo "Merged ${#files[@]} report(s) -> coverage-reports/Cobertura.xml"
+
+    - name: Upload coverage reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-reports
+        path: coverage-reports/Cobertura.xml
+        retention-days: 7
+        if-no-files-found: warn

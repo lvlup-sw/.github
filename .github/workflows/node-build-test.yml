@@ -1,0 +1,92 @@
+# =============================================================================
+# Reusable Workflow: Node Build & Test with Coverage  (TS parity, DR-T4)
+# =============================================================================
+# Thin PRESET over the `node-build-test` composite action — the TypeScript
+# counterpart to build-and-test.yml. Installs, typechecks, optionally lints, runs
+# vitest with coverage, emits one merged Cobertura, and uploads `coverage-reports`.
+# Gate it with the language-agnostic `coverage-gate` action on the produced report
+# (TS consumes the gate ACTION directly — no .NET ReportGenerator merge step).
+#
+# Usage:
+#   jobs:
+#     build-test:
+#       uses: lvlup-sw/.github/.github/workflows/node-build-test.yml@v1.1
+#       with:
+#         working-directory: .
+#         lint-command: 'eslint .'   # opt-in
+# =============================================================================
+
+name: Node Build & Test
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory to run in (the package/workspace root).'
+        required: false
+        type: string
+        default: '.'
+      node-version:
+        description: 'Node.js version.'
+        required: false
+        type: string
+        default: 'lts/*'
+      package-manager:
+        description: 'auto | npm | pnpm | bun.'
+        required: false
+        type: string
+        default: 'auto'
+      test-command:
+        description: 'Test command (coverage flags appended by the action).'
+        required: false
+        type: string
+        default: 'vitest run'
+      lint-command:
+        description: 'Opt-in lint command; skipped when empty.'
+        required: false
+        type: string
+        default: ''
+      typecheck:
+        description: 'Run tsc --noEmit before tests.'
+        required: false
+        type: boolean
+        default: true
+      coverage-provider:
+        description: 'vitest coverage provider: v8 or istanbul.'
+        required: false
+        type: string
+        default: 'v8'
+      runner:
+        description: 'GitHub Actions runner label.'
+        required: false
+        type: string
+        default: 'self-hosted'
+    outputs:
+      tests-passed:
+        description: 'Whether the test run passed.'
+        value: ${{ jobs.build-test.outputs.tests-passed }}
+
+jobs:
+  build-test:
+    name: Node Build & Test
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      tests-passed: ${{ steps.build-test.outputs.tests-passed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Internal action ref is @main here and is repinned to the v1.1 release SHA
+      # at the release step (DR-T4 / T10), mirroring how v1's refs were pinned in
+      # the follow-up release PR (#14). Dependabot then keeps the pin current.
+      - name: Build & test
+        id: build-test
+        uses: lvlup-sw/.github/actions/node-build-test@main
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          node-version: ${{ inputs.node-version }}
+          package-manager: ${{ inputs.package-manager }}
+          test-command: ${{ inputs.test-command }}
+          lint-command: ${{ inputs.lint-command }}
+          typecheck: ${{ inputs.typecheck }}
+          coverage-provider: ${{ inputs.coverage-provider }}
