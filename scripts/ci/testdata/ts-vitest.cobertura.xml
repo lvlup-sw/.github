@@ -1,0 +1,41 @@
+<?xml version="1.0" ?>
+<!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/coverage-04.dtd">
+<!--
+  Cross-language fixture (DR-T2): a vitest/istanbul-reports `cobertura` output,
+  NOT a .NET one. Two things differ from the C# fixtures and are exactly what we
+  assert the org gate tolerates:
+    1. <package name> is a SOURCE DIRECTORY (incl. a nested, slash-containing
+       monorepo path) — not a dotted assembly name.
+    2. an istanbul DOCTYPE + per-line <lines> subtree the gate must ignore.
+  Aggregate: line 180/200 = 0.90, branch 85/100 = 0.85.
+-->
+<coverage lines-valid="200" lines-covered="180" line-rate="0.9" branches-valid="100" branches-covered="85" branch-rate="0.85" timestamp="0" complexity="0" version="0.1">
+  <sources>
+    <source>/repo</source>
+  </sources>
+  <packages>
+    <package name="src" line-rate="0.92" branch-rate="0.88" complexity="0">
+      <classes>
+        <class name="index.ts" filename="src/index.ts" line-rate="0.92" branch-rate="0.88" complexity="0">
+          <methods/>
+          <lines>
+            <line number="1" hits="1"/>
+            <line number="2" hits="1"/>
+            <line number="3" hits="0"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+    <package name="servers/exarchos-mcp/src" line-rate="0.88" branch-rate="0.82" complexity="0">
+      <classes>
+        <class name="server.ts" filename="servers/exarchos-mcp/src/server.ts" line-rate="0.88" branch-rate="0.82" complexity="0">
+          <methods/>
+          <lines>
+            <line number="1" hits="3"/>
+            <line number="2" hits="0"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>

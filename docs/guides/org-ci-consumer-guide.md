@@ -152,3 +152,48 @@ unaffected.
   `coverage-gate`; add `aot-smoke` / `benchmark-smoke` only if you need them.
 - **Reference consumer** (bifrost): see `lvlup-sw/bifrost#39` — composes all four
   actions including the per-assembly + branch gate.
+
+## TypeScript / Node consumers (`v1.1`+)
+
+The TS layer mirrors the C# one: a `node-build-test` action (+ a
+`node-build-test.yml` preset) and an opt-in `node-benchmark-smoke`. **The gate is
+the same** — `coverage-gate` consumes the generic Cobertura `node-build-test`
+emits, so there is no TS-specific gate.
+
+```yaml
+jobs:
+  ci:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lvlup-sw/.github/actions/node-build-test@v1.1
+        with:
+          working-directory: .
+          lint-command: 'eslint .'   # opt-in; omit to skip lint
+      # Consume the gate as an ACTION on the produced report — NOT the
+      # coverage-gate.yml workflow (that merges via .NET ReportGenerator).
+      - uses: lvlup-sw/.github/actions/coverage-gate@v1.1
+        with:
+          coverage-file: ./coverage-reports/Cobertura.xml
+          threshold: 80
+          shared-ref: v1.1
+```
+
+Or turnkey via the preset (then add a gate job):
+`uses: lvlup-sw/.github/.github/workflows/node-build-test.yml@v1.1`.
+
+Notes:
+
+- **Coverage provider package required.** vitest needs `@vitest/coverage-v8`
+  (default) or `@vitest/coverage-istanbul` installed to emit Cobertura. The action
+  passes `--coverage.reporter=cobertura`; set `coverage-provider: istanbul` for the
+  instrumented TSX/JSX fallback.
+- **Package manager** is auto-detected from the lockfile (npm / pnpm / bun); set
+  `package-manager` to force it. **Lint** is opt-in (`lint-command`, default off).
+- **Monorepos:** `node-build-test` merges every project's Cobertura into one
+  `coverage-reports/Cobertura.xml` (via the shared `scripts/ci/merge-cobertura.mjs`),
+  so the `aggregate` default works across all projects.
+- **Gating granularity.** istanbul names each Cobertura `<package>` by **source
+  directory**, not assembly — so `gate-mode: per-assembly` gates **per-directory**
+  for TS (same mechanism, different unit). `--exclude` matches the directory name.
+- Pin `@v1.1`/`@<sha>` and let Dependabot bump it, same as the C# blocks.

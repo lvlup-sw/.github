@@ -1,0 +1,90 @@
+# =============================================================================
+# Composite Action: Node Benchmark Smoke (opt-in)  —  TS parity with benchmark-smoke
+# =============================================================================
+# The TypeScript counterpart to the C# `benchmark-smoke`: a fast `vitest bench`
+# run that proves the benchmarks compile and execute, without a full timed
+# measurement. OPT-IN — a repo that never `uses:` it is unaffected (no-op by
+# omission). Self-contained: detects the package manager, installs, and runs.
+#
+# Usage:
+#   - uses: lvlup-sw/.github/actions/node-benchmark-smoke@v1.1
+#     with:
+#       working-directory: servers/exarchos-mcp
+# =============================================================================
+
+name: 'Node Benchmark Smoke'
+description: 'Run `vitest bench` as a fast smoke test that benchmarks compile and execute.'
+
+inputs:
+  working-directory:
+    description: 'Directory containing the benchmark suite.'
+    required: false
+    default: '.'
+  bench-command:
+    description: 'Benchmark command to run.'
+    required: false
+    default: 'vitest bench --run'
+  node-version:
+    description: 'Node.js version for actions/setup-node.'
+    required: false
+    default: 'lts/*'
+  package-manager:
+    description: 'auto (detect from lockfile), npm, pnpm, or bun.'
+    required: false
+    default: 'auto'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Detect package manager
+      id: detect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PM_INPUT: ${{ inputs.package-manager }}
+      run: |
+        set -euo pipefail
+        pm="$PM_INPUT"
+        if [[ "$pm" == "auto" ]]; then
+          if [[ -f bun.lockb || -f bun.lock ]]; then pm=bun
+          elif [[ -f pnpm-lock.yaml ]]; then pm=pnpm
+          else pm=npm; fi
+        fi
+        case "$pm" in
+          npm|pnpm|bun) ;;
+          *) echo "::error::unsupported package-manager '$pm' (expected auto|npm|pnpm|bun)"; exit 1 ;;
+        esac
+        echo "pm=$pm" >> "$GITHUB_OUTPUT"
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PM: ${{ steps.detect.outputs.pm }}
+      run: |
+        set -euo pipefail
+        case "$PM" in
+          pnpm) corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile ;;
+          bun)  npm install -g bun && bun install --frozen-lockfile ;;
+          npm)  if [[ -f package-lock.json ]]; then npm ci; else npm install; fi ;;
+        esac
+
+    - name: Benchmark smoke
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PM: ${{ steps.detect.outputs.pm }}
+        BENCH_CMD: ${{ inputs.bench-command }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086
+        case "$PM" in
+          npm)  npx --no-install $BENCH_CMD ;;
+          pnpm) pnpm exec $BENCH_CMD ;;
+          bun)  bunx $BENCH_CMD ;;
+        esac

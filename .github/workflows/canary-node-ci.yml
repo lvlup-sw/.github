@@ -1,0 +1,135 @@
+# =============================================================================
+# Canary: Node composable CI layer (DR-T4 / task-8)
+# =============================================================================
+# Exercises the new TS actions against the committed fixture project in
+# scripts/ci/testdata/ts-canary-fixture on PRs to THIS repo, proving:
+#   (a) node-build-test produces a merged Cobertura and the language-agnostic
+#       coverage-gate PASSES it at a low threshold and FAILS it at 100;
+#   (b) node-benchmark-smoke runs (`vitest bench`);
+#   (c) the lockfile -> package-manager auto-detect rule is correct.
+# A caller that omits node-benchmark-smoke (job a) is unaffected — no-op by omission.
+#
+# Local actions are referenced via ./actions/... and shared-ref is pinned to the
+# PR commit (github.sha) so the canary exercises THIS PR's merge helper, not main.
+# =============================================================================
+
+name: Canary - Node CI
+
+on:
+  pull_request:
+    paths:
+      - 'actions/node-build-test/**'
+      - 'actions/node-benchmark-smoke/**'
+      - 'actions/coverage-gate/**'
+      - '.github/workflows/node-build-test.yml'
+      - '.github/workflows/canary-node-ci.yml'
+      - 'scripts/ci/merge-cobertura.mjs'
+      - 'scripts/ci/testdata/ts-canary-fixture/**'
+
+permissions:
+  contents: read
+
+env:
+  FIXTURE: scripts/ci/testdata/ts-canary-fixture
+
+jobs:
+  # (a) Build+test produces a merged Cobertura; the gate passes low / fails at 100.
+  build-test-and-gate:
+    name: node-build-test + coverage-gate (pass low / fail 100)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (provides the local actions + fixture)
+        uses: actions/checkout@v4
+
+      - name: Build & test the fixture
+        id: bt
+        uses: ./actions/node-build-test
+        with:
+          working-directory: ${{ env.FIXTURE }}
+          shared-ref: ${{ github.sha }}
+
+      - name: Assert tests passed and a merged report exists
+        env:
+          TESTS_PASSED: ${{ steps.bt.outputs.tests-passed }}
+        run: |
+          set -euo pipefail
+          if [ "$TESTS_PASSED" != "true" ]; then
+            echo "::error::node-build-test reported tests-passed=$TESTS_PASSED"
+            exit 1
+          fi
+          test -f ./coverage-reports/Cobertura.xml || {
+            echo "::error::merged Cobertura.xml was not produced"; exit 1; }
+          echo "node-build-test produced coverage-reports/Cobertura.xml"
+
+      - name: Gate PASSES at a low threshold
+        id: gate_pass
+        uses: ./actions/coverage-gate
+        with:
+          threshold: '1'
+          coverage-file: ./coverage-reports/Cobertura.xml
+          output-dir: ./coverage-merged
+          shared-ref: ${{ github.sha }}
+
+      - name: Gate FAILS at threshold 100 (fixture is <100% covered)
+        id: gate_fail
+        continue-on-error: true
+        uses: ./actions/coverage-gate
+        with:
+          threshold: '100'
+          coverage-file: ./coverage-reports/Cobertura.xml
+          output-dir: ./coverage-merged-100
+          shared-ref: ${{ github.sha }}
+
+      - name: Assert verdicts
+        env:
+          PASS_OUTCOME: ${{ steps.gate_pass.outcome }}
+          FAIL_OUTCOME: ${{ steps.gate_fail.outcome }}
+        run: |
+          set -euo pipefail
+          [ "$PASS_OUTCOME" = "success" ] || { echo "::error::gate@1 should pass, got $PASS_OUTCOME"; exit 1; }
+          [ "$FAIL_OUTCOME" = "failure" ] || { echo "::error::gate@100 should fail, got $FAIL_OUTCOME"; exit 1; }
+          echo "Canary OK: TS coverage gated by the language-agnostic coverage-gate."
+
+  # (b) Opt-in benchmark smoke runs.
+  benchmark-smoke:
+    name: node-benchmark-smoke (vitest bench)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run benchmark smoke
+        uses: ./actions/node-benchmark-smoke
+        with:
+          working-directory: ${{ env.FIXTURE }}
+
+  # (c) Lockfile -> package-manager auto-detect rule (cheap; no installs).
+  pm-detect:
+    name: PM auto-detect (${{ matrix.pm }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pm: npm
+            lockfile: package-lock.json
+          - pm: pnpm
+            lockfile: pnpm-lock.yaml
+          - pm: bun
+            lockfile: bun.lockb
+    steps:
+      - name: Detect from a lockfile fixture
+        env:
+          LOCKFILE: ${{ matrix.lockfile }}
+          EXPECTED: ${{ matrix.pm }}
+        run: |
+          set -euo pipefail
+          d="$(mktemp -d)"
+          cd "$d"
+          touch "$LOCKFILE"
+          # Mirrors the detection rule in actions/node-build-test/action.yml.
+          if [[ -f bun.lockb || -f bun.lock ]]; then pm=bun
+          elif [[ -f pnpm-lock.yaml ]]; then pm=pnpm
+          else pm=npm; fi
+          echo "$LOCKFILE -> $pm (expected $EXPECTED)"
+          [[ "$pm" == "$EXPECTED" ]]

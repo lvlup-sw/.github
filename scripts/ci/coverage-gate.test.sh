@@ -340,6 +340,42 @@ run_gate_noxmllint 1 "task-18: --per-assembly (no xmllint) all-excluded fails (n
     --per-assembly "$DATA/merged-multipackage-pass.cobertura.xml" --threshold 80 \
     --exclude 'Bifrost*'
 
+# ---------------------------------------------------------------------------
+# DR-T2 — cross-language (TypeScript / vitest+istanbul) Cobertura
+#
+# The gate is generic Cobertura: it must read a vitest/istanbul `cobertura`
+# report identically to a .NET one. The fixture uses DIRECTORY-style <package>
+# names (incl. a nested, slash-containing monorepo path) + an istanbul DOCTYPE
+# and per-line <lines> subtree. These cases RED-guard any C#-specific assumption
+# creeping into coverage-gate.sh. (Discovery finding F1 — locked under test.)
+# ---------------------------------------------------------------------------
+
+# Aggregate default (line-only): line 0.90 >= 80 -> PASS, same as any .NET report.
+run_gate 0 "DR-T2: aggregate default passes on TS/istanbul cobertura (line 0.90 >= 80)" -- \
+    --coverage-file "$DATA/ts-vitest.cobertura.xml" --threshold 80
+
+# Aggregate default at 95: line 0.90 < 95 -> FAIL.
+run_gate 1 "DR-T2: aggregate default fails on TS cobertura when line 0.90 < 95" -- \
+    --coverage-file "$DATA/ts-vitest.cobertura.xml" --threshold 95
+
+# Per-assembly (== per-DIRECTORY for TS): both dirs clear 80 line+branch -> PASS.
+# Proves the gate parses slash-containing <package> names.
+run_gate 0 "DR-T2: --per-assembly passes on TS cobertura (every directory >= 80 line+branch)" -- \
+    --per-assembly "$DATA/ts-vitest.cobertura.xml" --threshold 80
+
+# At 85, servers/exarchos-mcp/src branch 0.82 < 85 -> FAIL (one sub-threshold dir).
+run_gate 1 "DR-T2: --per-assembly fails when a TS directory branch (0.82) is below 85" -- \
+    --per-assembly "$DATA/ts-vitest.cobertura.xml" --threshold 85
+
+# Excluding the failing directory BY ITS SLASH-CONTAINING NAME flips fail -> pass.
+run_gate 0 "DR-T2: --per-assembly --exclude on a slash-containing directory name passes" -- \
+    --per-assembly "$DATA/ts-vitest.cobertura.xml" --threshold 85 \
+    --exclude 'servers/exarchos-mcp/src'
+
+# grep/sed fallback (no xmllint) yields the same verdict on directory names.
+run_gate_noxmllint 1 "DR-T2: --per-assembly (no xmllint) fails on sub-threshold TS directory" -- \
+    --per-assembly "$DATA/ts-vitest.cobertura.xml" --threshold 85
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [[ "$FAIL" -eq 0 ]]

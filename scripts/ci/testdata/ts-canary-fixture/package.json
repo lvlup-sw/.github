@@ -1,0 +1,16 @@
+{
+  "name": "ts-canary-fixture",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Minimal vitest project exercised by canary-node-ci.yml. Intentionally <100% covered so the gate can be asserted to pass at a low threshold and fail at 100.",
+  "scripts": {
+    "test": "vitest run",
+    "bench": "vitest bench --run"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0"
+  }
+}
