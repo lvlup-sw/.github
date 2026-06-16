@@ -1,0 +1,32 @@
+# =============================================================================
+# Dependabot — GitHub Actions pin updates  (org CI re-architecture, T13 / DR-6)
+# =============================================================================
+# Dependabot owns version/SHA bumps for every `uses:` ref in this repo:
+#   - the reusable workflows under .github/workflows/
+#   - the composite actions under actions/* (their own external `uses:` steps)
+#   - the internal lvlup-sw/.github/actions/...@<sha> self-pins added in T13
+#     (Dependabot re-pins these to the v1 tag's commit once v1 is cut).
+#
+# Renovate's github-actions manager is DISABLED in renovate.json so the two
+# bots never open competing PRs for the same refs. Renovate still owns
+# everything else it already managed (the runner Dockerfile image versions,
+# lock-file maintenance, etc.).
+# =============================================================================
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # "/" scans .github/workflows/*.yml; the globbed dirs scan each composite
+    # action's action.yml (Dependabot does not auto-discover subdir actions).
+    directories:
+      - "/"
+      - "/actions/*"
+    schedule:
+      interval: "weekly"
+      day: "saturday"
+    commit-message:
+      prefix: "ci"
+    # One grouped PR per run keeps action-bump noise low.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
