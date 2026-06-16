@@ -42,10 +42,10 @@ on:
         type: string
         default: ''
       shared-ref:
-        description: 'Ref of lvlup-sw/.github to sparse-checkout scripts/ci (the merge helper) from. Repinned to the release SHA at release.'
+        description: 'Ref of lvlup-sw/.github to sparse-checkout scripts/ci (the merge helper) from. Defaults to the v1.1 release SHA so the merge helper is pinned; override to use a different ref.'
         required: false
         type: string
-        default: 'main'
+        default: 'bf3bc29a2dbc0555dce3c9fc24b2c5898baf9c2e'
       test-command:
         description: 'Test command (coverage flags appended by the action).'
         required: false
@@ -86,12 +86,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Internal action ref is @main here and is repinned to the v1.1 release SHA
-      # at the release step (DR-T4 / T10), mirroring how v1's refs were pinned in
-      # the follow-up release PR (#14). Dependabot then keeps the pin current.
+      # Pinned to the v1.1 release SHA (the #16 merge commit) so a consumer
+      # pinning this workflow @v1.1 gets a fully SHA-pinned action graph — the
+      # action and (via shared-ref) the merge helper. Dependabot keeps it current.
       - name: Build & test
         id: build-test
-        uses: lvlup-sw/.github/actions/node-build-test@main
+        uses: lvlup-sw/.github/actions/node-build-test@bf3bc29a2dbc0555dce3c9fc24b2c5898baf9c2e # v1.1
         with:
           working-directory: ${{ inputs.working-directory }}
           node-version: ${{ inputs.node-version }}
