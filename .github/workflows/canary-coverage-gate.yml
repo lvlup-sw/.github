@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (provides the local action + fixtures)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Stage default-parity fixture as the merged report
         run: |
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (provides the local action + fixtures)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Stage per-assembly fixture (Bifrost.Core branch 0.50)
         run: |
