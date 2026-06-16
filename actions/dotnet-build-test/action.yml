@@ -33,6 +33,15 @@ inputs:
     description: 'Newline-separated glob patterns to skip (e.g., *Integration.Tests*)'
     required: false
     default: ''
+  test-filter:
+    description: >-
+      Microsoft.Testing.Platform --treenode-filter expression applied to every
+      test project, scoping which tests run within each (e.g.
+      "/*/*/*/*[Category!=Stress]" to exclude a category that runs in a separate
+      gated job). Empty (the default) runs every test, so existing consumers are
+      unaffected.
+    required: false
+    default: ''
   coverage-filters:
     description: 'ReportGenerator -assemblyfilters value'
     required: false
@@ -78,10 +87,17 @@ runs:
       env:
         TEST_PROJECT_PATTERNS: ${{ inputs.test-project-patterns }}
         SKIP_PATTERNS: ${{ inputs.skip-patterns }}
+        TEST_FILTER: ${{ inputs.test-filter }}
       run: |
         set -uo pipefail
         mkdir -p ./TestResults
         failed=0
+
+        # Optional MTP --treenode-filter, applied to every project (e.g. to
+        # exclude a [Category=...] that runs in a separate gated job). Empty =
+        # run all tests, so the flag is omitted entirely.
+        filter_args=()
+        [[ -n "$TEST_FILTER" ]] && filter_args+=(--treenode-filter "$TEST_FILTER")
 
         while IFS= read -r pattern; do
           [[ -z "$pattern" ]] && continue
@@ -109,6 +125,7 @@ runs:
             echo "Running tests: $proj"
 
             if ! dotnet run --project "$proj" --configuration Release -- \
+              "${filter_args[@]}" \
               --coverage \
               --coverage-output-format cobertura \
               --coverage-output "$coverage_path"; then
