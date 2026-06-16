@@ -151,7 +151,11 @@ unaffected.
   replace bespoke build/test/coverage steps with `dotnet-build-test` +
   `coverage-gate`; add `aot-smoke` / `benchmark-smoke` only if you need them.
 - **Reference consumer** (bifrost): see `lvlup-sw/bifrost#39` — composes all four
-  actions including the per-assembly + branch gate.
+  actions including the per-assembly + branch gate, and passes the
+  `dotnet-build-test` `test-filter` input (`v1.2`+) an MTP `--treenode-filter` to
+  exclude its `[Category=Stress]` proofs from the per-PR run (those run in a
+  separate gated job). `test-filter` is optional and empty by default, so it
+  changes nothing for other consumers.
 
 ## TypeScript / Node consumers (`v1.1`+)
 
