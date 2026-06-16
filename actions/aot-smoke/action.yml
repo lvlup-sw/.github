@@ -23,7 +23,7 @@
 #     with:
 #       dotnet-version: '10.0.x'
 #       dotnet-quality: 'preview'
-#   - uses: lvlup-sw/.github/actions/aot-smoke@<sha>
+#   - uses: lvlup-sw/.github/actions/aot-smoke@v1   # or a 40-char @<sha> (see docs/guides/org-ci-consumer-guide.md)
 #     with:
 #       project-path: samples/Bifrost.Scheduling.AotSmoke/Bifrost.Scheduling.AotSmoke.csproj
 # =============================================================================

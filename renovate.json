@@ -1,8 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "GitHub Actions pins are owned by Dependabot (.github/dependabot.yml) since the org CI re-architecture (T13/DR-6); Renovate's github-actions manager is disabled below so the two bots do not open competing PRs. Renovate keeps the runner Dockerfile image versions and lock-file maintenance.",
   "extends": [
     "config:recommended"
   ],
+  "github-actions": {
+    "enabled": false
+  },
   "schedule": [
     "on saturday",
     "on sunday"

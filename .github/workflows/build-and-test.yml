@@ -14,7 +14,7 @@
 # Usage:
 #   jobs:
 #     test:
-#       uses: lvlup-sw/.github/.github/workflows/build-and-test.yml@main
+#       uses: lvlup-sw/.github/.github/workflows/build-and-test.yml@v1
 #       with:
 #         solution-path: 'MyProject.slnx'
 #         test-project-patterns: |
@@ -87,11 +87,13 @@ jobs:
       # All build/test/coverage logic lives in the dotnet-build-test composite
       # action (single source of truth, DR-3). This workflow is a thin preset
       # wrapper over it. The action is referenced by its full org-repo path so
-      # GitHub resolves it without a manual checkout; @main is replaced with the
-      # release tag/SHA when the org cuts a version (DR-6).
+      # GitHub resolves it without a manual checkout. Pinned to the merged
+      # composite-layer SHA (PR #13) rather than @main so a consumer pinning
+      # this workflow @v1 gets a fully SHA-pinned action graph (DR-6 / T13).
+      # Dependabot (.github/dependabot.yml) keeps this pin current.
       - name: Build & test
         id: build-test
-        uses: lvlup-sw/.github/actions/dotnet-build-test@main
+        uses: lvlup-sw/.github/actions/dotnet-build-test@1f1e883bc1a19140206b5da7442864905c05dec8 # v1
         with:
           solution-path: ${{ inputs.solution-path }}
           test-project-patterns: ${{ inputs.test-project-patterns }}
