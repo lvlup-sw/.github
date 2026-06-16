@@ -20,6 +20,7 @@ on:
     paths:
       - 'actions/node-build-test/**'
       - 'actions/node-benchmark-smoke/**'
+      - 'actions/coverage-gate/**'
       - '.github/workflows/node-build-test.yml'
       - '.github/workflows/canary-node-ci.yml'
       - 'scripts/ci/merge-cobertura.mjs'

@@ -9,7 +9,11 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { mergeCoberturaStrings } from './merge-cobertura.mjs'
+
+const SCRIPT = fileURLToPath(new URL('./merge-cobertura.mjs', import.meta.url))
 
 const fileA = `<?xml version="1.0" ?>
 <coverage line-rate="0.9" branch-rate="0.8" lines-valid="100" lines-covered="90" branches-valid="50" branches-covered="40" version="1.9" timestamp="0">
@@ -66,4 +70,15 @@ test('emits a single well-formed <coverage> root', () => {
   assert.equal(merged.match(/<coverage[\s>]/g).length, 1)
   assert.equal(merged.match(/<\/coverage>/g).length, 1)
   assert.match(merged, /^<\?xml/)
+})
+
+test('rejects an empty input array', () => {
+  assert.throws(() => mergeCoberturaStrings([]), /non-empty/)
+})
+
+test('CLI: --out without a value exits non-zero', () => {
+  assert.throws(
+    () => execFileSync('node', [SCRIPT, 'some.xml', '--out'], { stdio: 'pipe' }),
+    (err) => err.status === 2,
+  )
 })

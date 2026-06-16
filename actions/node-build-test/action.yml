@@ -89,6 +89,10 @@ runs:
           elif [[ -f pnpm-lock.yaml ]]; then pm=pnpm
           else pm=npm; fi
         fi
+        case "$pm" in
+          npm|pnpm|bun) ;;
+          *) echo "::error::unsupported package-manager '$pm' (expected auto|npm|pnpm|bun)"; exit 1 ;;
+        esac
         echo "pm=$pm" >> "$GITHUB_OUTPUT"
         echo "Detected package manager: $pm"
 

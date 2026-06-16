@@ -36,6 +36,16 @@ on:
         required: false
         type: string
         default: 'auto'
+      install-command:
+        description: 'Override the install command. Empty = derived from the detected PM.'
+        required: false
+        type: string
+        default: ''
+      shared-ref:
+        description: 'Ref of lvlup-sw/.github to sparse-checkout scripts/ci (the merge helper) from. Repinned to the release SHA at release.'
+        required: false
+        type: string
+        default: 'main'
       test-command:
         description: 'Test command (coverage flags appended by the action).'
         required: false
@@ -86,7 +96,9 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
           node-version: ${{ inputs.node-version }}
           package-manager: ${{ inputs.package-manager }}
+          install-command: ${{ inputs.install-command }}
           test-command: ${{ inputs.test-command }}
           lint-command: ${{ inputs.lint-command }}
           typecheck: ${{ inputs.typecheck }}
           coverage-provider: ${{ inputs.coverage-provider }}
+          shared-ref: ${{ inputs.shared-ref }}

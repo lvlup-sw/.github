@@ -85,7 +85,13 @@ if (isMain()) {
   const args = process.argv.slice(2)
   const out = (() => {
     const i = args.indexOf('--out')
-    return i >= 0 ? args[i + 1] : './coverage-merged/Cobertura.xml'
+    if (i === -1) return './coverage-merged/Cobertura.xml'
+    const v = args[i + 1]
+    if (!v || v.startsWith('--')) {
+      console.error('error: --out requires a path argument')
+      process.exit(2)
+    }
+    return v
   })()
   const inputs = args.filter((a, i) => a !== '--out' && args[i - 1] !== '--out')
   if (inputs.length === 0) {
