@@ -1,0 +1,44 @@
+# =============================================================================
+# Canary: codeql.yml reusable workflow
+# =============================================================================
+# Chain-specific canary proving THIS repo's `codeql.yml` reusable resolves and
+# runs init + analyze end to end, on every PR that touches the reusable or its
+# fixture. It calls the reusable with `languages: csharp` + `build-mode: none`
+# (the production buildless path) against the committed C# fixture in
+# scripts/ci/testdata/csharp-canary-fixture/, and passes `upload: never` +
+# `upload-database: false` so the canary needs no Code Scanning enablement —
+# a green job means the reusable's interface and the buildless analysis both
+# work.
+#
+# Dedicated canary file (not a shared canary) to avoid cross-chain conflicts,
+# mirroring canary-coverage-gate.yml.
+# =============================================================================
+
+name: Canary - CodeQL Reusable
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/codeql.yml'
+      - '.github/workflows/canary-codeql.yml'
+      - 'scripts/ci/testdata/csharp-canary-fixture/**'
+
+permissions:
+  contents: read
+
+jobs:
+  # Calls the reusable on its own PR ref (uses: ./...) so the canary exercises
+  # THIS PR's codeql.yml, not main. security-events: write is granted for parity
+  # with production even though upload: never means nothing is uploaded.
+  buildless-csharp:
+    name: Buildless csharp analysis runs (upload never)
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: ./.github/workflows/codeql.yml
+    with:
+      languages: csharp
+      build-mode: none
+      upload: never
+      upload-database: false
