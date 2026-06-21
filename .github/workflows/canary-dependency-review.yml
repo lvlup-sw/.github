@@ -1,0 +1,33 @@
+# =============================================================================
+# Canary: dependency-review.yml reusable workflow
+# =============================================================================
+# Chain-specific canary proving THIS repo's `dependency-review.yml` reusable
+# resolves and runs on a real pull_request. Dependency review is available on
+# public repos without GHAS, so a green job here means the reusable's interface
+# works and the action runs against the PR's base..head dependency graph (a PR
+# that introduces no vulnerable dependencies passes — the expected verdict for
+# a workflow-only change).
+#
+# Dedicated canary file, mirroring canary-coverage-gate.yml.
+# =============================================================================
+
+name: Canary - Dependency Review Reusable
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dependency-review.yml'
+      - '.github/workflows/canary-dependency-review.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  runs-on-pr:
+    name: Dependency review runs on the PR
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/dependency-review.yml
+    with:
+      fail-on-severity: high
