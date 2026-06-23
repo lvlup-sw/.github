@@ -48,6 +48,25 @@ if [[ -n "${EXCLUDE:-}" ]]; then
     EXCLUDE_GLOBS=(${EXCLUDE})
 fi
 
+# Per-assembly threshold map (--per-assembly mode only). Each rule maps an
+# assembly-name GLOB to a "LINE[/BRANCH]" floor, letting risk-tiered repos hold
+# security/boundary assemblies higher than host wiring (issue #21). Raw rules
+# are seeded from the ASSEMBLY_THRESHOLDS env var (newline-separated; '#'
+# comments and blank lines ignored) and appended to by each --assembly-threshold
+# flag, then parsed into the AT_* parallel arrays AFTER arg parsing (once the
+# logging helpers exist). An assembly that matches NO rule falls back to the
+# global --threshold for both line and branch, so an EMPTY map reproduces
+# today's per-assembly behavior exactly.
+ASSEMBLY_THRESHOLD_RAW=()
+if [[ -n "${ASSEMBLY_THRESHOLDS:-}" ]]; then
+    while IFS= read -r _at_raw_line; do
+        ASSEMBLY_THRESHOLD_RAW+=("$_at_raw_line")
+    done <<< "$ASSEMBLY_THRESHOLDS"
+fi
+AT_GLOBS=()
+AT_LINE=()
+AT_BRANCH=()
+
 # Colors for terminal output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -91,6 +110,17 @@ Options:
                             --per-assembly it matches the <package> NAME. Use
                             for non-shipping units. May also be supplied via
                             the EXCLUDE env var as a whitespace-separated list.
+    --assembly-threshold RULE
+                            (--per-assembly only, repeatable) A risk-tiered
+                            floor "GLOB = LINE[/BRANCH]" applied to each
+                            <package> whose NAME matches GLOB. The FIRST matching
+                            rule wins (declare the most specific first); an
+                            assembly matching no rule falls back to --threshold.
+                            Omitting BRANCH (e.g. "*.Host = 70") gates line only
+                            and skips the branch check — for host wiring you do
+                            not want to chase branch %. May also be supplied via
+                            the ASSEMBLY_THRESHOLDS env var as a newline-separated
+                            list ('#' comments and blank lines ignored).
     --output-dir DIR        Directory for output files (default: current directory)
     --baseline PATH         Accepted for backward compatibility; currently unused.
     --verbose               Enable verbose output
@@ -109,6 +139,15 @@ Examples:
 
     # Per-assembly gate over one merged report, excluding a non-shipping assembly
     $(basename "$0") --per-assembly ./coverage/merged.cobertura.xml --threshold 80 --exclude 'Bifrost.Scheduling.Testing'
+
+    # Per-assembly gate with risk-tiered floors (security/boundary held higher,
+    # host wiring line-only); the global --threshold is the fallback floor.
+    $(basename "$0") --per-assembly ./coverage/merged.cobertura.xml --threshold 80 \\
+        --assembly-threshold '*Identity*   = 85/75' \\
+        --assembly-threshold '*.Core       = 80/70' \\
+        --assembly-threshold '*.Host       = 70'
+    ASSEMBLY_THRESHOLDS=\$'*Identity* = 85/75\\n*.Core = 80/70' \\
+        $(basename "$0") --per-assembly ./coverage/merged.cobertura.xml --threshold 80
 EOF
     exit 1
 }
@@ -148,6 +187,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --exclude)
             EXCLUDE_GLOBS+=("$2")
+            shift 2
+            ;;
+        --assembly-threshold)
+            ASSEMBLY_THRESHOLD_RAW+=("$2")
             shift 2
             ;;
         --threshold)
@@ -262,26 +305,28 @@ extract_branch_coverage() {
     echo "N/A"
 }
 
-# Decide pass/fail for a single (line%, branch%) pair against THRESHOLD.
-# Used by per-project / per-assembly modes (which always gate line+branch) and
-# by the aggregate mode when --metrics line+branch is selected. A branch value
-# of "N/A" (no branch-rate in the report) skips the branch check. Echoes
-# "pass" or "fail"; returns 0/1 accordingly.
-check_thresholds() {
+# Decide pass/fail for a single (line%, branch%) pair against EXPLICIT line and
+# branch thresholds. An empty branch threshold — or a branch value of "N/A" (no
+# branch-rate in the report) — skips the branch check. Echoes "pass"/"fail" and
+# returns 0/1. This is the tiered-aware primitive; per-assembly mode passes a
+# rule's floor here, while check_thresholds wraps it with the global THRESHOLD.
+check_thresholds_against() {
     local line_pct="$1"
     local branch_pct="$2"
+    local line_thr="$3"
+    local branch_thr="$4"
 
     local line_int
     line_int=$(echo "$line_pct" | awk '{print int($1)}')
-    if [[ "$line_int" -lt "$THRESHOLD" ]]; then
+    if [[ "$line_int" -lt "$line_thr" ]]; then
         echo "fail"
         return 1
     fi
 
-    if [[ -n "$branch_pct" && "$branch_pct" != "N/A" ]]; then
+    if [[ -n "$branch_thr" && -n "$branch_pct" && "$branch_pct" != "N/A" ]]; then
         local branch_int
         branch_int=$(echo "$branch_pct" | awk '{print int($1)}')
-        if [[ "$branch_int" -lt "$THRESHOLD" ]]; then
+        if [[ "$branch_int" -lt "$branch_thr" ]]; then
             echo "fail"
             return 1
         fi
@@ -289,6 +334,14 @@ check_thresholds() {
 
     echo "pass"
     return 0
+}
+
+# Decide pass/fail for a single (line%, branch%) pair against the global
+# THRESHOLD (line + branch). Used by per-project mode and as the per-assembly
+# fallback for assemblies that match no tiered rule. A branch value of "N/A"
+# skips the branch check. Echoes "pass"/"fail"; returns 0/1.
+check_thresholds() {
+    check_thresholds_against "$1" "$2" "$THRESHOLD" "$THRESHOLD"
 }
 
 # True if the given filename matches any configured exclude glob.
@@ -302,6 +355,80 @@ is_excluded() {
         fi
     done
     return 1
+}
+
+# Parse one "GLOB = LINE[/BRANCH]" rule into the AT_* parallel arrays. Trims
+# surrounding whitespace, ignores blank lines and '#' comments, and tolerates
+# spaces around '=' and '/' (so "*Identity* = 85 / 75" is valid). A malformed
+# rule — missing '=', empty glob, or a non-numeric / out-of-range (>100)
+# percentage — is a hard error (exit 1) rather than a silently dropped floor.
+parse_assembly_threshold_rule() {
+    local rule="$1"
+    # Trim leading/trailing whitespace.
+    rule="${rule#"${rule%%[![:space:]]*}"}"
+    rule="${rule%"${rule##*[![:space:]]}"}"
+    [[ -z "$rule" ]] && return 0
+    [[ "$rule" == \#* ]] && return 0
+
+    if [[ "$rule" != *=* ]]; then
+        log_error "Invalid --assembly-threshold rule (expected 'GLOB = LINE[/BRANCH]'): $rule"
+        exit 1
+    fi
+
+    local glob="${rule%%=*}"
+    local spec="${rule#*=}"
+    # Trim whitespace around the glob and the spec.
+    glob="${glob#"${glob%%[![:space:]]*}"}"; glob="${glob%"${glob##*[![:space:]]}"}"
+    spec="${spec#"${spec%%[![:space:]]*}"}"; spec="${spec%"${spec##*[![:space:]]}"}"
+
+    if [[ -z "$glob" ]]; then
+        log_error "Invalid --assembly-threshold rule (empty glob): $rule"
+        exit 1
+    fi
+
+    local line_thr branch_thr
+    line_thr="${spec%%/*}"
+    if [[ "$spec" == */* ]]; then
+        branch_thr="${spec#*/}"
+    else
+        branch_thr=""
+    fi
+    # Strip any inner spaces (e.g. "85 / 75").
+    line_thr="${line_thr//[[:space:]]/}"
+    branch_thr="${branch_thr//[[:space:]]/}"
+
+    if ! [[ "$line_thr" =~ ^[0-9]+$ ]] || [[ "$line_thr" -gt 100 ]]; then
+        log_error "Invalid line threshold '$line_thr' in --assembly-threshold rule: $rule"
+        exit 1
+    fi
+    if [[ -n "$branch_thr" ]] && { ! [[ "$branch_thr" =~ ^[0-9]+$ ]] || [[ "$branch_thr" -gt 100 ]]; }; then
+        log_error "Invalid branch threshold '$branch_thr' in --assembly-threshold rule: $rule"
+        exit 1
+    fi
+
+    AT_GLOBS+=("$glob")
+    AT_LINE+=("$line_thr")
+    AT_BRANCH+=("$branch_thr")
+}
+
+# Resolve the effective (line, branch) floor for one assembly NAME against the
+# per-assembly threshold map. The FIRST matching glob wins (declare the most
+# specific rules first). Emits "LINE<TAB>BRANCH" where BRANCH is empty when the
+# matched rule omitted a branch floor (=> the branch check is skipped — the
+# "host wiring: don't chase branch %" case). An assembly matching no rule falls
+# back to the global THRESHOLD for both.
+effective_thresholds() {
+    local name="$1"
+    local n="${#AT_GLOBS[@]}"
+    local i
+    for (( i = 0; i < n; i++ )); do
+        # shellcheck disable=SC2053  # RHS is an intentional glob pattern
+        if [[ "$name" == ${AT_GLOBS[$i]} ]]; then
+            printf '%s\t%s\n' "${AT_LINE[$i]}" "${AT_BRANCH[$i]}"
+            return 0
+        fi
+    done
+    printf '%s\t%s\n' "$THRESHOLD" "$THRESHOLD"
 }
 
 # Extract per-package (assembly) rows from a single MERGED Cobertura report.
@@ -360,6 +487,17 @@ extract_assembly_rows() {
     fi
 }
 
+# Parse the raw per-assembly threshold rules now that the logging helpers are
+# defined (parse_assembly_threshold_rule exits 1 on a malformed rule). The map
+# is consumed only by --per-assembly mode; if rules were supplied in another
+# mode, warn rather than silently ignore them so the misconfiguration is visible.
+for _at_rule in "${ASSEMBLY_THRESHOLD_RAW[@]+"${ASSEMBLY_THRESHOLD_RAW[@]}"}"; do
+    parse_assembly_threshold_rule "$_at_rule"
+done
+if [[ "${#AT_GLOBS[@]}" -gt 0 && -z "$PER_ASSEMBLY_FILE" ]]; then
+    log_warn "Per-assembly threshold map supplied but mode is not --per-assembly; the map is ignored"
+fi
+
 # ---------------------------------------------------------------------------
 # Per-assembly mode: gate each <package> in a single MERGED Cobertura report.
 # Each <package name="AssemblyName" line-rate=".." branch-rate=".."> is one
@@ -384,21 +522,32 @@ if [[ -n "$PER_ASSEMBLY_FILE" ]]; then
 
         if is_excluded "$asm_name"; then
             log_info "Excluding ${asm_name} (matched exclude glob)"
-            ROWS+="| ${asm_name} | - | - | :fast_forward: Excluded |\n"
+            ROWS+="| ${asm_name} | - | - | - | :fast_forward: Excluded |\n"
             continue
         fi
 
         CONSIDERED=$((CONSIDERED + 1))
-        # '|| true' keeps `set -e` from aborting on a failing assembly — we
-        # branch on the echoed "pass"/"fail" string, not the exit status.
-        asm_result=$(check_thresholds "$asm_line" "$asm_branch") || true
+
+        # Resolve this assembly's effective floor: a matching tiered rule, else
+        # the global THRESHOLD. An empty branch floor means "don't gate branch"
+        # (rendered as "-" in the Threshold column).
+        IFS=$'\t' read -r asm_line_thr asm_branch_thr < <(effective_thresholds "$asm_name")
+        if [[ -n "$asm_branch_thr" ]]; then
+            asm_thr_label="${asm_line_thr}/${asm_branch_thr}"
+        else
+            asm_thr_label="${asm_line_thr}/-"
+        fi
+
+        # '|| true' keeps a failing assembly from aborting the loop — we branch
+        # on the echoed "pass"/"fail" string, not the exit status.
+        asm_result=$(check_thresholds_against "$asm_line" "$asm_branch" "$asm_line_thr" "$asm_branch_thr") || true
 
         if [[ "$asm_result" == "pass" ]]; then
-            log_info "PASS ${asm_name}: line ${asm_line}% / branch ${asm_branch}%"
-            ROWS+="| ${asm_name} | ${asm_line}% | ${asm_branch}% | :white_check_mark: Pass |\n"
+            log_info "PASS ${asm_name}: line ${asm_line}% / branch ${asm_branch}% (floor ${asm_thr_label})"
+            ROWS+="| ${asm_name} | ${asm_line}% | ${asm_branch}% | ${asm_thr_label} | :white_check_mark: Pass |\n"
         else
-            log_error "FAIL ${asm_name}: line ${asm_line}% / branch ${asm_branch}% (threshold ${THRESHOLD}%)"
-            ROWS+="| ${asm_name} | ${asm_line}% | ${asm_branch}% | :x: Fail |\n"
+            log_error "FAIL ${asm_name}: line ${asm_line}% / branch ${asm_branch}% (floor ${asm_thr_label})"
+            ROWS+="| ${asm_name} | ${asm_line}% | ${asm_branch}% | ${asm_thr_label} | :x: Fail |\n"
             OVERALL_STATUS="failing"
         fi
     done < <(extract_assembly_rows "$PER_ASSEMBLY_FILE")
@@ -412,12 +561,16 @@ if [[ -n "$PER_ASSEMBLY_FILE" ]]; then
     {
         echo "## :bar_chart: Per-Assembly Coverage Report"
         echo
-        echo "| Assembly | Line | Branch | Status |"
-        echo "|----------|------|--------|--------|"
+        echo "| Assembly | Line | Branch | Threshold | Status |"
+        echo "|----------|------|--------|-----------|--------|"
         echo -en "$ROWS"
         echo
         echo "---"
-        echo "<sub>Generated by coverage-gate.sh | Per-assembly gate | Threshold: ${THRESHOLD}% (line + branch)</sub>"
+        if [[ "${#AT_GLOBS[@]}" -gt 0 ]]; then
+            echo "<sub>Generated by coverage-gate.sh | Per-assembly gate | Tiered thresholds (Threshold column is line/branch; '-' = branch not gated); assemblies matching no rule use the global ${THRESHOLD}%</sub>"
+        else
+            echo "<sub>Generated by coverage-gate.sh | Per-assembly gate | Threshold: ${THRESHOLD}% (line + branch)</sub>"
+        fi
     } > "$PR_COMMENT_FILE"
 
     log_info "PR comment written to: $PR_COMMENT_FILE"
