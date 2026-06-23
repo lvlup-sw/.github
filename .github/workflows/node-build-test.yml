@@ -84,7 +84,7 @@ jobs:
       tests-passed: ${{ steps.build-test.outputs.tests-passed }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Pinned to the v1.1 release SHA (the #16 merge commit) so a consumer
       # pinning this workflow @v1.1 gets a fully SHA-pinned action graph — the
