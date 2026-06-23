@@ -13,6 +13,9 @@
 #   - Each test project produces a Cobertura XML report
 #   - Reports are merged via ReportGenerator into coverage.cobertura.xml
 #   - Uploaded as the 'coverage-reports' artifact (7-day retention)
+#   - exclude-generated=true passes a default code-coverage settings file
+#     (coverage-settings.generated-exclusion.xml) so generated code is kept out
+#     of the denominator (GeneratedCodeAttribute + .g.cs/.Designer.cs). Opt-in.
 #
 # Skip patterns:
 #   - Use skip-patterns to exclude test projects (e.g., integration tests)
@@ -46,6 +49,16 @@ inputs:
     description: 'ReportGenerator -assemblyfilters value'
     required: false
     default: ''
+  exclude-generated:
+    description: >-
+      When 'true', exclude generated code from coverage collection by passing a
+      default Microsoft code-coverage settings file (coverage-settings) that
+      drops elements carrying [GeneratedCodeAttribute] and sources matching
+      .g.cs / .g.i.cs / .Designer.cs. Defense-in-depth for generators that do
+      not stamp [ExcludeFromCodeCoverage] (issue #21). Opt-in: the default
+      'false' leaves collection byte-for-byte unchanged for existing consumers.
+    required: false
+    default: 'false'
   dotnet-version:
     description: '.NET SDK version (e.g., 9.0.x, 10.0.x)'
     required: false
@@ -88,6 +101,8 @@ runs:
         TEST_PROJECT_PATTERNS: ${{ inputs.test-project-patterns }}
         SKIP_PATTERNS: ${{ inputs.skip-patterns }}
         TEST_FILTER: ${{ inputs.test-filter }}
+        EXCLUDE_GENERATED: ${{ inputs.exclude-generated }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         set -uo pipefail
         mkdir -p ./TestResults
@@ -98,6 +113,21 @@ runs:
         # run all tests, so the flag is omitted entirely.
         filter_args=()
         [[ -n "$TEST_FILTER" ]] && filter_args+=(--treenode-filter "$TEST_FILTER")
+
+        # Optional generated-code exclusion: pass a default Microsoft code-
+        # coverage settings file that drops generated code (GeneratedCodeAttribute
+        # + .g.cs/.g.i.cs/.Designer.cs sources) from the denominator. Opt-in;
+        # empty array (the default) leaves the --coverage invocation unchanged.
+        coverage_settings_args=()
+        if [[ "$EXCLUDE_GENERATED" == "true" ]]; then
+          settings_file="${ACTION_PATH}/coverage-settings.generated-exclusion.xml"
+          if [[ -f "$settings_file" ]]; then
+            coverage_settings_args+=(--coverage-settings "$settings_file")
+            echo "Generated-code exclusion ENABLED via $settings_file"
+          else
+            echo "::warning::exclude-generated=true but settings file not found at $settings_file; collecting without it"
+          fi
+        fi
 
         while IFS= read -r pattern; do
           [[ -z "$pattern" ]] && continue
@@ -127,6 +157,7 @@ runs:
             if ! dotnet run --project "$proj" --configuration Release -- \
               "${filter_args[@]}" \
               --coverage \
+              "${coverage_settings_args[@]}" \
               --coverage-output-format cobertura \
               --coverage-output "$coverage_path"; then
               echo "::error::Tests failed for $proj"

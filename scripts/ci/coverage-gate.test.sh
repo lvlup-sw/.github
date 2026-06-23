@@ -341,6 +341,79 @@ run_gate_noxmllint 1 "task-18: --per-assembly (no xmllint) all-excluded fails (n
     --exclude 'Bifrost*'
 
 # ---------------------------------------------------------------------------
+# task-21 (issue #21) — per-assembly TIERED thresholds
+#
+# A risk-tiered floor map ("GLOB = LINE[/BRANCH]", repeatable / via
+# ASSEMBLY_THRESHOLDS) lets security/boundary assemblies be held higher than
+# host wiring. First matching rule wins; assemblies matching no rule fall back
+# to the global --threshold; an EMPTY map reproduces task-18 behavior exactly.
+# Fixtures reused: merged-multipackage-pass (all >= 80/80; Scheduling.Core
+# 0.92/0.84) and merged-multipackage (Bifrost.Core 0.93 line / 0.50 branch).
+# ---------------------------------------------------------------------------
+
+# RAISE: an all-passing report FAILS once a tiered rule lifts one assembly's
+# floor above its actual coverage (Scheduling.Core 0.92 line < a 95 floor).
+run_gate 1 "task-21: per-assembly tiered rule raising a floor fails an assembly above its actual coverage" -- \
+    --per-assembly "$DATA/merged-multipackage-pass.cobertura.xml" --threshold 80 \
+    --assembly-threshold '*Scheduling.Core = 95/90'
+
+# LOWER + fallback: the global-80 report FAILS on Bifrost.Core branch 0.50, but
+# a tiered rule lowering ONLY Bifrost.Core's branch floor to 40 flips it to PASS
+# while every other assembly is still gated at the global 80/80 fallback.
+run_gate 0 "task-21: per-assembly tiered rule lowering one assembly's branch floor passes; others use global fallback" -- \
+    --per-assembly "$DATA/merged-multipackage.cobertura.xml" --threshold 80 \
+    --assembly-threshold 'Bifrost.Core = 80/40'
+
+# Branch IS still gated under a tiered rule: a 60 branch floor on Bifrost.Core
+# (branch 0.50) FAILS — proves the lowered-floor pass above is real gating.
+run_gate 1 "task-21: per-assembly tiered branch floor still gates branch (Bifrost.Core 0.50 < 60)" -- \
+    --per-assembly "$DATA/merged-multipackage.cobertura.xml" --threshold 80 \
+    --assembly-threshold 'Bifrost.Core = 80/60'
+
+# LINE-ONLY rule (no BRANCH): host-wiring style "don't chase branch %". A rule
+# of "Bifrost.Core = 80" gates line only, so its 0.50 branch is ignored -> PASS.
+run_gate 0 "task-21: per-assembly line-only rule skips the branch check (host wiring)" -- \
+    --per-assembly "$DATA/merged-multipackage.cobertura.xml" --threshold 80 \
+    --assembly-threshold 'Bifrost.Core = 80'
+
+# FIRST-MATCH-WINS: a specific Bifrost.Core rule precedes a broad catch-all that
+# would otherwise fail it. Core passes on its specific 80/40; the catch-all
+# 99/99 fails the OTHER assemblies -> overall FAIL, proving order precedence.
+run_gate 1 "task-21: per-assembly first matching rule wins over a later catch-all" -- \
+    --per-assembly "$DATA/merged-multipackage.cobertura.xml" --threshold 80 \
+    --assembly-threshold 'Bifrost.Core = 80/40' \
+    --assembly-threshold '* = 99/99'
+
+# ENV VAR == FLAG: the same lowering rule supplied via ASSEMBLY_THRESHOLDS
+# (newline list, with a '#' comment + blank line to be ignored) -> PASS.
+ASSEMBLY_THRESHOLDS=$'# tiered floors\nBifrost.Core = 80/40\n' \
+    run_gate 0 "task-21: per-assembly honors the ASSEMBLY_THRESHOLDS env var (comments/blanks ignored)" -- \
+    --per-assembly "$DATA/merged-multipackage.cobertura.xml" --threshold 80
+
+# EMPTY MAP = PARITY: with no rules, the per-assembly verdict is unchanged from
+# task-18 (the all-passing report still PASSES) — the feature is purely additive.
+run_gate 0 "task-21: per-assembly with an empty threshold map is parity with task-18 (no drift)" -- \
+    --per-assembly "$DATA/merged-multipackage-pass.cobertura.xml" --threshold 80
+
+# MALFORMED RULE is a hard error, not a silently dropped floor.
+run_gate 1 "task-21: per-assembly malformed rule (no '=') fails fast" -- \
+    --per-assembly "$DATA/merged-multipackage-pass.cobertura.xml" --threshold 80 \
+    --assembly-threshold 'NoEqualsSign'
+
+run_gate 1 "task-21: per-assembly malformed rule (non-numeric percent) fails fast" -- \
+    --per-assembly "$DATA/merged-multipackage-pass.cobertura.xml" --threshold 80 \
+    --assembly-threshold 'Bifrost.Core = high/low'
+
+# grep/sed fallback (no xmllint) yields the same tiered verdict.
+run_gate_noxmllint 1 "task-21: per-assembly (no xmllint) tiered raise fails an assembly above its floor" -- \
+    --per-assembly "$DATA/merged-multipackage-pass.cobertura.xml" --threshold 80 \
+    --assembly-threshold '*Scheduling.Core = 95/90'
+
+run_gate_noxmllint 0 "task-21: per-assembly (no xmllint) tiered lower passes with global fallback" -- \
+    --per-assembly "$DATA/merged-multipackage.cobertura.xml" --threshold 80 \
+    --assembly-threshold 'Bifrost.Core = 80/40'
+
+# ---------------------------------------------------------------------------
 # DR-T2 — cross-language (TypeScript / vitest+istanbul) Cobertura
 #
 # The gate is generic Cobertura: it must read a vitest/istanbul `cobertura`

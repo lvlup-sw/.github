@@ -17,6 +17,7 @@
 #   gate-mode=per-assembly  -> --per-assembly  <coverage-file>
 #   metrics=line|line+branch-> --metrics <metrics>   (aggregate mode only)
 #   exclude="<globs>"       -> --exclude <glob> (repeated, per-project/assembly)
+#   assembly-thresholds=... -> ASSEMBLY_THRESHOLDS env (per-assembly tiered floors)
 #   threshold=N             -> --threshold N
 #   output-dir=DIR          -> --output-dir DIR
 #
@@ -53,6 +54,15 @@ inputs:
     default: './coverage-reports'
   exclude:
     description: 'Whitespace-separated globs of units to skip (per-project: Cobertura file name; per-assembly: <package> name). One --exclude per glob.'
+    required: false
+    default: ''
+  assembly-thresholds:
+    description: >-
+      (gate-mode=per-assembly only) Optional risk-tiered floor map: a
+      newline-separated list of "GLOB = LINE[/BRANCH]" rules applied to each
+      <package> whose name matches GLOB. First matching rule wins; assemblies
+      matching no rule fall back to `threshold`. Omit BRANCH (e.g.
+      "*.Host = 70") to gate line only. Passed to the gate as ASSEMBLY_THRESHOLDS.
     required: false
     default: ''
   output-dir:
@@ -93,6 +103,7 @@ runs:
         COVERAGE_FILE: ${{ inputs.coverage-file }}
         REPORT_DIR: ${{ inputs.report-dir }}
         EXCLUDE_GLOBS: ${{ inputs.exclude }}
+        ASSEMBLY_THRESHOLDS: ${{ inputs.assembly-thresholds }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
       run: |
         set -euo pipefail

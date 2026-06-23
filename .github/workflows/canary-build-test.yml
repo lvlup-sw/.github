@@ -141,3 +141,58 @@ jobs:
           path: ./TestResults/coverage.cobertura.xml
           retention-days: 7
           if-no-files-found: warn
+
+  # --------------------------------------------------------------------------
+  # Fast gate for the opt-in generated-exclusion settings file (issue #21,
+  # part 2). The full collector-acceptance run happens when a consumer (bifrost
+  # / basileus) opts into exclude-generated=true; this cheap job catches the
+  # realistic failure mode here — a malformed or content-incomplete settings
+  # file — on every PR that touches the action, without a second bifrost build
+  # (the action's hardcoded 'coverage-reports' artifact upload makes running the
+  # action twice in one workflow run collide under upload-artifact@v4).
+  # --------------------------------------------------------------------------
+  validate-coverage-settings:
+    name: Validate generated-exclusion coverage settings
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Settings file is well-formed XML and excludes generated code
+        run: |
+          set -euo pipefail
+          f=actions/dotnet-build-test/coverage-settings.generated-exclusion.xml
+
+          if [[ ! -f "$f" ]]; then
+            echo "::error::missing settings file $f"; exit 1
+          fi
+
+          # Well-formedness (python3 is always present on ubuntu-latest).
+          python3 -c "import xml.dom.minidom,sys; xml.dom.minidom.parse(sys.argv[1])" "$f"
+          echo "well-formed XML: OK"
+
+          # Inspect only the actual exclude ELEMENT lines, not the comment (the
+          # comment names CompilerGeneratedAttribute to explain its absence).
+          # The file content is itself ECMAScript regex, so match fixed strings.
+          attr_lines="$(grep -F '<Attribute>' "$f" || true)"
+          src_lines="$(grep -F '<Source>' "$f" || true)"
+
+          if ! grep -Fq 'GeneratedCodeAttribute' <<<"$attr_lines"; then
+            echo "::error::no GeneratedCodeAttribute exclude"; exit 1
+          fi
+          if ! grep -Fq 'ExcludeFromCodeCoverageAttribute' <<<"$attr_lines"; then
+            echo "::error::ExcludeFromCodeCoverage exclude not preserved"; exit 1
+          fi
+          if ! grep -Fq 'g\.cs' <<<"$src_lines"; then
+            echo "::error::no .g.cs source exclude"; exit 1
+          fi
+          if ! grep -Fq 'IncludeTestAssembly>False' "$f"; then
+            echo "::error::IncludeTestAssembly must be False"; exit 1
+          fi
+
+          # CompilerGeneratedAttribute must NOT be an excluded attribute (would
+          # drop async/await/yield/auto-props from coverage).
+          if grep -Fq 'CompilerGeneratedAttribute' <<<"$attr_lines"; then
+            echo "::error::CompilerGeneratedAttribute must not be excluded"; exit 1
+          fi
+          echo "generated-exclusion settings file: VALID"

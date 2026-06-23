@@ -56,6 +56,11 @@ on:
         required: false
         type: string
         default: 'line'
+      assembly-thresholds:
+        description: 'gate-mode=per-assembly only: newline-separated "GLOB = LINE[/BRANCH]" risk-tiered floor rules. First match wins; unmatched assemblies use coverage-threshold. Pass-through to the coverage-gate action.'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   coverage-gate:
@@ -96,6 +101,7 @@ jobs:
           threshold: ${{ inputs.coverage-threshold }}
           gate-mode: ${{ inputs.gate-mode }}
           metrics: ${{ inputs.metrics }}
+          assembly-thresholds: ${{ inputs.assembly-thresholds }}
           coverage-file: ./coverage-merged/Cobertura.xml
           report-dir: ./coverage-reports
           output-dir: ./coverage-merged
