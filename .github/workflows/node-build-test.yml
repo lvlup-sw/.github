@@ -84,14 +84,14 @@ jobs:
       tests-passed: ${{ steps.build-test.outputs.tests-passed }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Pinned to the v1.1 release SHA (the #16 merge commit) so a consumer
       # pinning this workflow @v1.1 gets a fully SHA-pinned action graph — the
       # action and (via shared-ref) the merge helper. Dependabot keeps it current.
       - name: Build & test
         id: build-test
-        uses: lvlup-sw/.github/actions/node-build-test@bf3bc29a2dbc0555dce3c9fc24b2c5898baf9c2e # v1.1
+        uses: lvlup-sw/.github/actions/node-build-test@bc1b7854c25904ed6e507d34db6a3c8b6d049a89 # v1.1
         with:
           working-directory: ${{ inputs.working-directory }}
           node-version: ${{ inputs.node-version }}
