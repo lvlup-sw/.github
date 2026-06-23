@@ -92,11 +92,11 @@ jobs:
             -targetdir:"./coverage-merged" \
             -reporttypes:"Cobertura;TextSummary"
 
-      # Pinned to the merged composite-layer SHA (PR #13), not @main, so a
-      # consumer pinning this workflow @v1 gets a fully SHA-pinned action graph
-      # (DR-6 / T13). Dependabot (.github/dependabot.yml) keeps this pin current.
+      # Pinned to the v1.4 release SHA, not @main, so a consumer pinning this
+      # workflow @v1 gets a fully SHA-pinned action graph (DR-6 / T13).
+      # Dependabot (.github/dependabot.yml) keeps this pin current.
       - name: Coverage gate
-        uses: lvlup-sw/.github/actions/coverage-gate@1f1e883bc1a19140206b5da7442864905c05dec8 # v1
+        uses: lvlup-sw/.github/actions/coverage-gate@bc1b7854c25904ed6e507d34db6a3c8b6d049a89 # v1.4
         with:
           threshold: ${{ inputs.coverage-threshold }}
           gate-mode: ${{ inputs.gate-mode }}
@@ -108,5 +108,5 @@ jobs:
           # Pin the shared scripts/ci checkout to the same release SHA as the
           # action above, so the GATE SCRIPT is pinned too — not just the action
           # (it otherwise defaults to @main and would float; DR-6 / T13).
-          shared-ref: 1f1e883bc1a19140206b5da7442864905c05dec8 # v1
+          shared-ref: bc1b7854c25904ed6e507d34db6a3c8b6d049a89 # v1.4
           github-token: ${{ github.token }}
