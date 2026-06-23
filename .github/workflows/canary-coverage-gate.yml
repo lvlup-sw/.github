@@ -118,3 +118,67 @@ jobs:
           cat ./coverage-assembly/pr-comment.md
           grep -q 'Bifrost.Core' ./coverage-assembly/pr-comment.md
           echo "Canary OK: opt-in per-assembly+branch gate fails the seeded sub-threshold assembly."
+
+  # --------------------------------------------------------------------------
+  # (c) Tiered thresholds (issue #21): a risk-tiered floor map raises ONE
+  # assembly's floor above its actual coverage and FAILS an otherwise-passing
+  # report — proving the new `assembly-thresholds` input is wired end-to-end
+  # through the action (workflow input -> action input -> ASSEMBLY_THRESHOLDS
+  # env -> gate script). The all-passing fixture (every assembly >= 80/80) is
+  # gated with a 95/90 floor on Bifrost.Scheduling.Core (0.92 line / 0.84
+  # branch), which must drop below the raised floor while the others stay green.
+  # --------------------------------------------------------------------------
+  per-assembly-tiered-failure:
+    name: Per-assembly tiered floor fails an assembly above its raised floor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (provides the local action + fixtures)
+        uses: actions/checkout@v4
+
+      - name: Stage all-passing fixture as the merged report
+        run: |
+          mkdir -p ./coverage-tiered
+          cp scripts/ci/testdata/merged-multipackage-pass.cobertura.xml \
+             ./coverage-tiered/Cobertura.xml
+
+      - name: Run gate per-assembly with a tiered floor raising Scheduling.Core
+        id: gate
+        continue-on-error: true
+        uses: ./actions/coverage-gate
+        with:
+          threshold: '80'
+          gate-mode: per-assembly
+          coverage-file: ./coverage-tiered/Cobertura.xml
+          output-dir: ./coverage-tiered
+          assembly-thresholds: |
+            *Scheduling.Core = 95/90
+          shared-ref: ${{ github.sha }}
+
+      - name: Assert FAIL verdict + tiered floor shown in comment
+        run: |
+          if [ "${{ steps.gate.outcome }}" != "failure" ]; then
+            echo "::error::tiered gate expected to FAIL (Scheduling.Core 92% < 95 floor) but outcome was '${{ steps.gate.outcome }}'"
+            exit 1
+          fi
+          echo "Tiered FAILURE recorded as expected. PR comment:"
+          cat ./coverage-tiered/pr-comment.md
+          # The Threshold column must surface the raised floor for the assembly.
+          grep -q '95/90' ./coverage-tiered/pr-comment.md
+          grep -q 'Bifrost.Scheduling.Core' ./coverage-tiered/pr-comment.md
+          echo "Canary OK: per-assembly tiered floor map fails an assembly above its raised floor."
+
+  # --------------------------------------------------------------------------
+  # (d) Unit harness: run the plain-bash coverage-gate.sh test suite in CI so
+  # the gate's verdict + backward-compat parity cases (including the new tiered
+  # threshold cases) actually gate PRs. The harness was previously run only
+  # manually; this canary already triggers on scripts/ci/** changes.
+  # --------------------------------------------------------------------------
+  gate-script-unit-tests:
+    name: coverage-gate.sh unit harness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run coverage-gate.sh test harness
+        run: bash scripts/ci/coverage-gate.test.sh
