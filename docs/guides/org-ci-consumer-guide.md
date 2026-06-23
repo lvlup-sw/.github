@@ -70,6 +70,14 @@ steps:
         **/tests/**/*.Tests.csproj
 ```
 
+**Optional — keep generated code out of coverage** (`build-and-test.yml` and the
+`dotnet-build-test` action): set `exclude-generated: true` to pass a default
+Microsoft code-coverage settings file during collection that drops elements
+carrying `[GeneratedCodeAttribute]` and sources matching `.g.cs` / `.Designer.cs`.
+Opt-in; the default (`false`) leaves collection unchanged. Use it when a
+source generator emits code that isn't stamped `[ExcludeFromCodeCoverage]` and
+would otherwise dilute the coverage denominator.
+
 ### Pinning the shared gate script
 
 The `coverage-gate` **action** sparse-checks-out the shared
@@ -110,6 +118,7 @@ Opt into stricter gating per repo:
 | `gate-mode` | `aggregate` (default), `per-project`, `per-assembly` | Granularity the threshold is applied at. |
 | `metrics` | `line` (default), `line+branch` | Aggregate mode: also gate branch coverage. |
 | `exclude` | whitespace-separated globs | Skip named projects / assemblies. |
+| `assembly-thresholds` | newline list of `GLOB = LINE[/BRANCH]` | `per-assembly` only: risk-tiered floors. First matching rule wins; unmatched assemblies use `coverage-threshold`. Omit `BRANCH` to gate line only. |
 
 ```yaml
 # bifrost-style strict gate: every assembly ≥ 80% line AND branch
@@ -119,6 +128,23 @@ Opt into stricter gating per repo:
       coverage-threshold: 80
       gate-mode: per-assembly
       metrics: line+branch
+```
+
+```yaml
+# risk-tiered gate: hold security/boundary higher than domain logic, and
+# don't chase branch % on host wiring. coverage-threshold is the fallback floor.
+  coverage:
+    uses: lvlup-sw/.github/.github/workflows/coverage-gate.yml@v1
+    with:
+      coverage-threshold: 80
+      gate-mode: per-assembly
+      assembly-thresholds: |
+        *Identity*            = 85/75
+        *McpToken*            = 85/75
+        *CodeExecutionBridge* = 85/75
+        *Trading*             = 80/70
+        *.Core                = 80/70
+        *.Host                = 70      # line only (boot-tested elsewhere)
 ```
 
 Failure modes are non-vacuous: an empty or fully-excluded unit set exits
