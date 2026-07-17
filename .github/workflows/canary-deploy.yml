@@ -175,7 +175,11 @@ jobs:
       - name: Checkout (full history — the pinned commit must be resolvable)
         uses: actions/checkout@v4
         with:
+          # The pinned SHA is only reachable with the full history fetched.
           fetch-depth: 0
+          # This job reads local git objects; it never talks to the remote
+          # again, so the token has no reason to stay on disk.
+          persist-credentials: false
 
       - name: Assert the pinned SHA carries this PR's action.yml
         shell: bash
