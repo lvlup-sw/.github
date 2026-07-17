@@ -1,0 +1,209 @@
+# =============================================================================
+# Canary: Terraform deploy spine (DR-1)
+# =============================================================================
+# CHAIN-SPECIFIC canary for the deploy spine — the `terraform-deploy` composite
+# action + its thin `deploy.yml` wrapper. NOT a shared/reusable file: it runs
+# only on pull requests to THIS repo (lvlup-sw/.github) that touch the deploy
+# chain, exercising the spine *as proposed on the PR head* before it can reach
+# any consumer.
+#
+# AUTH-FREE BY DESIGN. It runs against a provider-less local fixture
+# (scripts/ci/testdata/terraform-canary-fixture) with `-backend=false` and
+# `skip-login: true` — no azure/login, no cloud contact, no credentials. Do NOT
+# add cloud credentials to this canary: an org-wide reusable that self-tests
+# against a live tenant is a standing blast radius, and the fixture proves the
+# thing that actually needs proving (see below).
+#
+# What it checks:
+#   1. PLAN LEG   — deploy.yml's wiring/inputs resolve and a plan runs clean.
+#   2. APPLY LEG  — the fixture apply produces REAL local Terraform state, which
+#      is what makes (3) non-vacuous: outputs are read back from actual applied
+#      state rather than an empty map.
+#   3. OUTPUT FILTER (the security property) — the fixture declares BOTH a
+#      `sensitive = true` output and a plain one. The exposed map must have the
+#      sensitive key ABSENT *and* the plain key PRESENT.
+#
+#      BOTH HALVES ARE REQUIRED. Asserting only "sensitive is absent" would pass
+#      vacuously against an empty map — a filter that dropped everything, or an
+#      apply that produced nothing, would look identical to a working one. The
+#      assert job therefore fails an empty map outright.
+#
+#   4. PIN FRESHNESS — deploy.yml pins the action by SHA (DR-6), so the legs
+#      above test the PINNED action, not necessarily the PR head's source. This
+#      job fails if the pin does not resolve to the action source on this PR,
+#      which would make a green canary a lie about the code under review.
+#
+# ACCEPTED RESIDUAL (by design — do not "fix" it here): deploy.yml's gated
+# `apply` against real Azure is structurally verified only; this canary's apply
+# leg is auth-free. The spine those modes share IS live-certified via the
+# composite action by the T0 E2E harness. deploy.yml's own first live exercise
+# comes with its first standalone consumer (#56 T1 / #15).
+# =============================================================================
+
+name: Canary — Terraform Deploy Spine
+
+on:
+  pull_request:
+    paths:
+      - 'actions/terraform-deploy/**'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/canary-deploy.yml'
+      - 'scripts/ci/testdata/terraform-canary-fixture/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FIXTURE_DIR: scripts/ci/testdata/terraform-canary-fixture
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # (1) PLAN LEG — proves the wrapper's wiring and inputs. No state, no cloud.
+  # ---------------------------------------------------------------------------
+  plan-leg:
+    name: Plan leg (fixture, auth-free)
+    # Local path => the PR head's deploy.yml is what runs (a canary must test
+    # the change, not @v1).
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      # deploy.yml requests id-token: write, and GitHub refuses to let a called
+      # workflow hold more permission than its caller — omitting this here is
+      # the exact `startup_failure` documented in deploy.yml's header. Granted
+      # even though skip-login means OIDC is never exercised.
+      id-token: write
+      contents: read
+    with:
+      working-directory: scripts/ci/testdata/terraform-canary-fixture
+      mode: plan
+      # Job-local state, no remote backend, no Azure.
+      backend-args: '-backend=false'
+      skip-login: true
+
+  # ---------------------------------------------------------------------------
+  # (2) APPLY LEG — the null apply produces real local state for the filter
+  # proof. Still auth-free: the fixture has no azurerm provider.
+  # ---------------------------------------------------------------------------
+  apply-leg:
+    name: Apply leg (fixture, auth-free)
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      working-directory: scripts/ci/testdata/terraform-canary-fixture
+      mode: apply
+      backend-args: '-backend=false'
+      skip-login: true
+
+  # ---------------------------------------------------------------------------
+  # (3) THE FILTER PROOF — non-vacuous by construction.
+  # ---------------------------------------------------------------------------
+  assert-output-filter:
+    name: Sensitive output dropped AND plain output kept
+    needs: apply-leg
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert the exposed output map
+        shell: bash
+        env:
+          # The map as it crossed the workflow_call output boundary — i.e.
+          # exactly what a consumer would receive.
+          TF_OUTPUTS: ${{ needs.apply-leg.outputs.terraform-outputs }}
+          PLAIN_KEY: plain_value
+          SENSITIVE_KEY: secret_value
+          EXPECTED_PLAIN: deploy-spine-canary-applied
+          SENSITIVE_LITERAL: spine-canary-sensitive-must-not-leak
+        run: |
+          set -euo pipefail
+          echo "deploy.yml exposed: ${TF_OUTPUTS}"
+
+          if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$TF_OUTPUTS"; then
+            echo "::error::deploy.yml did not surface a JSON object (got: '${TF_OUTPUTS}')"
+            exit 1
+          fi
+
+          # --- NON-VACUITY GUARD ---------------------------------------------
+          # An empty map would satisfy the sensitive-absent check below while
+          # proving nothing at all. Fail it explicitly and first.
+          if [[ "$(jq -r 'length' <<<"$TF_OUTPUTS")" -eq 0 ]]; then
+            echo "::error::VACUOUS — the output map is EMPTY, so 'sensitive is absent' proves nothing."
+            echo "::error::Either the apply produced no state or the filter dropped everything."
+            exit 1
+          fi
+
+          # --- HALF 1: the plain output SURVIVED ------------------------------
+          if ! jq -e --arg k "$PLAIN_KEY" 'has($k)' >/dev/null <<<"$TF_OUTPUTS"; then
+            echo "::error::FILTER TOO AGGRESSIVE — non-sensitive '${PLAIN_KEY}' is missing from the exposed map"
+            exit 1
+          fi
+          actual="$(jq -r --arg k "$PLAIN_KEY" '.[$k]' <<<"$TF_OUTPUTS")"
+          if [[ "$actual" != "$EXPECTED_PLAIN" ]]; then
+            echo "::error::'${PLAIN_KEY}' is '${actual}', expected '${EXPECTED_PLAIN}' — the apply did not produce real state"
+            exit 1
+          fi
+          echo "OK — non-sensitive '${PLAIN_KEY}' present, read back from applied state"
+
+          # --- HALF 2: the sensitive output was DROPPED -----------------------
+          if jq -e --arg k "$SENSITIVE_KEY" 'has($k)' >/dev/null <<<"$TF_OUTPUTS"; then
+            echo "::error::LEAK — sensitive '${SENSITIVE_KEY}' crossed the output boundary"
+            exit 1
+          fi
+          echo "OK — sensitive '${SENSITIVE_KEY}' dropped by the filter"
+
+          # Defense in depth: the sensitive VALUE must appear nowhere, under any
+          # key (guards a filter that renames rather than drops).
+          if grep -qF "$SENSITIVE_LITERAL" <<<"$TF_OUTPUTS"; then
+            echo "::error::LEAK — the sensitive value is present in the exposed map"
+            exit 1
+          fi
+
+          echo "Canary OK: output filter is non-vacuously proven (sensitive ABSENT and plain PRESENT)."
+
+  # ---------------------------------------------------------------------------
+  # (4) PIN FRESHNESS — keeps the legs above honest.
+  #
+  # deploy.yml pins the composite action by SHA so consumers get a fully pinned
+  # graph (DR-6 / T13). The consequence is that the legs above exercise the
+  # action AT THAT PIN. If a PR edits the action but does not re-pin, the canary
+  # would silently certify the OLD action and go green over an untested change.
+  # ---------------------------------------------------------------------------
+  pin-freshness:
+    name: deploy.yml action pin resolves to this PR's action source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history — the pinned commit must be resolvable)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert the pinned SHA carries this PR's action.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          wf=.github/workflows/deploy.yml
+          action=actions/terraform-deploy/action.yml
+
+          pin="$(grep -oP 'lvlup-sw/\.github/actions/terraform-deploy@\K[0-9a-f]{40}' "$wf" || true)"
+          if [[ -z "$pin" ]]; then
+            echo "::error::$wf does not pin actions/terraform-deploy to a 40-char SHA (DR-6 requires a SHA pin)"
+            exit 1
+          fi
+          echo "deploy.yml pins terraform-deploy@$pin"
+
+          if ! git cat-file -e "${pin}^{commit}" 2>/dev/null; then
+            echo "::error::pinned commit $pin is not resolvable in this repository"
+            exit 1
+          fi
+
+          if ! git cat-file -p "${pin}:${action}" > /tmp/pinned-action.yml 2>/dev/null; then
+            echo "::error::pinned commit $pin does not contain $action"
+            exit 1
+          fi
+
+          if ! diff -u /tmp/pinned-action.yml "$action"; then
+            echo "::error::STALE PIN — $action changed on this PR but $wf still pins $pin."
+            echo "::error::The plan/apply legs would certify the OLD action. Re-pin deploy.yml to the commit carrying this action source."
+            exit 1
+          fi
+          echo "Pin is fresh: the legs exercise exactly this PR's action source."
