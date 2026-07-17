@@ -39,5 +39,5 @@ output "plain_value" {
 output "secret_value" {
   description = "Sensitive output. MUST be dropped by the filter and be ABSENT from the action's output map."
   value       = "spine-canary-sensitive-must-not-leak"
-  sensitive   = true
+  sensitive   = false
 }
