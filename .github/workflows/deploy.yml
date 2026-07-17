@@ -1,0 +1,200 @@
+# =============================================================================
+# Reusable Workflow: Terraform Deploy (secretless, federated OIDC)
+# =============================================================================
+# Runs a Terraform plan/apply/destroy against Azure as a single gateable job.
+#
+# This is a THIN JOB-SHAPED WRAPPER over the terraform-deploy composite action
+# (actions/terraform-deploy). All deploy logic lives in the action (single
+# source of truth, DR-1); this workflow only owns the workflow-level concerns
+# the action cannot: runs-on, the environment gate, `id-token: write`, and the
+# workflow_call signature.
+#
+# WORKFLOW OR ACTION? (they are not interchangeable here)
+#   - Use THIS WORKFLOW when the deploy is its own job — a standalone,
+#     environment-gated deployment. One `uses:` line.
+#   - Use the ACTION (actions/terraform-deploy) when you need apply/destroy as
+#     STEPS INSIDE YOUR OWN JOB — e.g. an ephemeral E2E harness whose Terraform
+#     state is job-local (-backend=false) and must stay on one runner, with
+#     assertions interleaved between apply and destroy. A workflow_call reusable
+#     cannot run as steps inside someone else's job, which is exactly why the
+#     mechanics live in the action.
+#   Both paths execute the same spine.
+#
+# ---------------------------------------------------------------------------
+# GOTCHA — MISSING `id-token: write` FAILS AT WORKFLOW STARTUP
+# ---------------------------------------------------------------------------
+# This workflow requests `id-token: write` (federated OIDC needs it to mint the
+# token). GitHub will NOT let a called workflow hold more permission than its
+# caller, and it validates that BEFORE running anything.
+#
+#   SYMPTOM: the run is marked `startup_failure` with NO jobs, no logs, and no
+#            annotation pointing at any step — it looks like the workflow file
+#            itself is broken. `gh run view <id>` shows an essentially empty run.
+#            The message, where it surfaces at all, reads like:
+#              "error parsing called workflow ... deploy.yml:
+#               the workflow is requesting 'id-token: write',
+#               but is only allowed 'id-token: none'"
+#
+#   CAUSE:   the CALLING job did not grant `id-token: write`. The default
+#            GITHUB_TOKEN permission set does not include id-token, so this bites
+#            every first-time caller.
+#
+#   FIX:     grant it on the calling job (permissions on a caller job apply to
+#            the reusable it calls):
+#              jobs:
+#                deploy:
+#                  permissions:
+#                    id-token: write   # REQUIRED — federated OIDC
+#                    contents: read
+#                  uses: lvlup-sw/.github/.github/workflows/deploy.yml@v1
+#
+# ---------------------------------------------------------------------------
+# SECURITY POSTURE
+# ---------------------------------------------------------------------------
+#   - SECRETLESS. Federated OIDC only; this workflow takes no secrets and there
+#     is no client-secret path anywhere in the chain. The OIDC ids are plain
+#     inputs — identifiers, not credentials — normally passed as repo
+#     `vars.AZURE_*`.
+#   - THE CALLER OWNS ENVIRONMENT PROTECTION. Pass `environment:` and configure
+#     the reviewer/branch rules on YOUR environment. A reusable workflow cannot
+#     impose a gate on its callers, so this file does not pretend to: it applies
+#     whatever environment you name, and an unnamed environment means no gate.
+#   - `terraform-outputs` is filtered to NON-SENSITIVE values by the action.
+#     Values crossing this workflow_call output boundary are NOT masked by
+#     GitHub, so never widen that filter.
+#
+# Usage:
+#   jobs:
+#     deploy:
+#       permissions:
+#         id-token: write        # REQUIRED — see the startup_failure gotcha above
+#         contents: read
+#       uses: lvlup-sw/.github/.github/workflows/deploy.yml@v1
+#       with:
+#         working-directory: infra/stamp
+#         mode: apply
+#         environment: production      # YOUR environment owns the reviewer gate
+#         client-id: ${{ vars.AZURE_CLIENT_ID }}
+#         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+#         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+# =============================================================================
+
+name: Terraform Deploy
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the Terraform root module.'
+        required: false
+        type: string
+        default: '.'
+      mode:
+        description: 'Terraform operation: plan, apply, or destroy.'
+        required: true
+        type: string
+      environment:
+        description: >-
+          GitHub environment to run under. THE CALLER OWNS ITS PROTECTION RULES
+          (required reviewers, branch restrictions) — name an environment here to
+          gate the deploy. Empty (default) means no environment and no gate.
+        required: false
+        type: string
+        default: ''
+      terraform-version:
+        description: 'Terraform version for setup-terraform (exact version, constraint, or "latest").'
+        required: false
+        type: string
+        default: 'latest'
+      backend-args:
+        description: 'Extra whitespace-separated args for `terraform init` (e.g. -backend-config=..., or -backend=false for job-local state).'
+        required: false
+        type: string
+        default: ''
+      var-file:
+        description: 'Optional -var-file passed to plan/apply/destroy.'
+        required: false
+        type: string
+        default: ''
+      tf-vars:
+        description: 'JSON object of Terraform variables, expanded to TF_VAR_* env vars.'
+        required: false
+        type: string
+        default: '{}'
+      client-id:
+        description: 'Azure client id for federated OIDC (an identifier, not a secret — pass vars.AZURE_CLIENT_ID).'
+        required: false
+        type: string
+        default: ''
+      tenant-id:
+        description: 'Azure tenant id for federated OIDC (an identifier, not a secret — pass vars.AZURE_TENANT_ID).'
+        required: false
+        type: string
+        default: ''
+      subscription-id:
+        description: 'Azure subscription id for federated OIDC (an identifier, not a secret — pass vars.AZURE_SUBSCRIPTION_ID).'
+        required: false
+        type: string
+        default: ''
+      skip-login:
+        description: >-
+          When true, skip azure/login for auth-free fixture runs (canary use).
+          EVERY real deployment leaves this false.
+        required: false
+        type: boolean
+        default: false
+      runner:
+        description: 'GitHub Actions runner label.'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+    outputs:
+      terraform-outputs:
+        description: 'JSON map of the root module outputs, filtered to NON-SENSITIVE values only.'
+        value: ${{ jobs.deploy.outputs.terraform-outputs }}
+
+jobs:
+  deploy:
+    name: Terraform ${{ inputs.mode }}
+    runs-on: ${{ inputs.runner }}
+    # Applies the caller's environment (and therefore the caller's protection
+    # rules). An empty string means no environment.
+    environment: ${{ inputs.environment }}
+    permissions:
+      # REQUIRED for federated OIDC. A caller that does not also grant this
+      # fails at STARTUP — see the gotcha in the header.
+      id-token: write
+      contents: read
+    outputs:
+      terraform-outputs: ${{ steps.deploy.outputs.terraform-outputs }}
+    steps:
+      # Checks out the CALLER's repo at the caller's ref (github.repository/sha
+      # resolve to the caller in a reusable workflow) — i.e. the Terraform code
+      # being deployed. persist-credentials: false keeps the job's token off
+      # disk; Terraform never needs git creds.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # All deploy logic lives in the terraform-deploy composite action (single
+      # source of truth, DR-1). The action is referenced by its full org-repo
+      # path so GitHub resolves it without a manual checkout, and pinned to a
+      # SHA rather than @main so a consumer pinning this workflow @v1 gets a
+      # fully SHA-pinned action graph (DR-6 / T13). Dependabot
+      # (.github/dependabot.yml) keeps this pin current; re-pin it to the
+      # release SHA when the next v1.x tag is cut.
+      - name: Terraform deploy
+        id: deploy
+        uses: lvlup-sw/.github/actions/terraform-deploy@27bfe259d15d257aa887a2a31887914e18cb9998 # feat/terraform-deploy-spine
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          mode: ${{ inputs.mode }}
+          terraform-version: ${{ inputs.terraform-version }}
+          backend-args: ${{ inputs.backend-args }}
+          var-file: ${{ inputs.var-file }}
+          tf-vars: ${{ inputs.tf-vars }}
+          client-id: ${{ inputs.client-id }}
+          tenant-id: ${{ inputs.tenant-id }}
+          subscription-id: ${{ inputs.subscription-id }}
+          skip-login: ${{ inputs.skip-login }}
