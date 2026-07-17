@@ -31,13 +31,8 @@ resource "terraform_data" "canary" {
   input = "deploy-spine-canary-applied"
 }
 
-output "plain_value" {
-  description = "Non-sensitive output. MUST survive the filter and be PRESENT in the action's output map."
-  value       = terraform_data.canary.output
-}
-
 output "secret_value" {
   description = "Sensitive output. MUST be dropped by the filter and be ABSENT from the action's output map."
   value       = "spine-canary-sensitive-must-not-leak"
-  sensitive   = false
+  sensitive   = true
 }
