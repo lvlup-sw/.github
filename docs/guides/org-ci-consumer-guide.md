@@ -4,10 +4,10 @@
 **Design / plan:** `docs/designs/2026-06-15-org-ci-rearchitecture.md`,
 `docs/plans/2026-06-15-org-ci-rearchitecture.md`.
 
-The org now ships CI as **composable building blocks**: four composite actions
-plus two thin preset reusable workflows built on top of them. This guide is for
-repos that consume them — how to pin a version, which building block to use, and
-how to opt into the stricter coverage gate.
+The org now ships CI as **composable building blocks**: composite actions, plus
+thin preset reusable workflows built on top of them (the table below is the
+catalog). This guide is for repos that consume them — how to pin a version, which
+building block to use, and how to opt into the stricter coverage gate.
 
 For the safe-bump and revert procedure, see
 `docs/runbooks/org-ci-parity-and-rollback.md`.
@@ -22,6 +22,8 @@ For the safe-bump and revert procedure, see
 | `coverage-gate` (composite action) | `actions/coverage-gate` | Run the shared gate script with full control over mode/metrics. |
 | `aot-smoke` (composite action, opt-in) | `actions/aot-smoke` | NativeAOT publish-and-run smoke. |
 | `benchmark-smoke` (composite action, opt-in) | `actions/benchmark-smoke` | BenchmarkDotNet `--job Dry` smoke. |
+| `deploy.yml` (reusable workflow) | `.github/workflows/deploy.yml` | Turnkey: a secretless, environment-gated Terraform `plan`/`apply`/`destroy` as its own job. |
+| `terraform-deploy` (composite action) | `actions/terraform-deploy` | Compose Terraform `plan`/`apply`/`destroy` as steps **inside your own job** — e.g. apply → assert → destroy on one runner. |
 
 **Workflow vs action:** use a **reusable workflow** when the org-standard job is
 all you need (one `uses:` line). Use the **composite actions** when you need to
@@ -164,6 +166,96 @@ unaffected.
     with:
       benchmark-project: src/MyApp.Benchmarks/MyApp.Benchmarks.csproj
 ```
+
+## Terraform deploy (`v1.6`+)
+
+The org's **secretless** Terraform deploy spine: federated GitHub OIDC →
+`azure/login` → `terraform init` → `plan` / `apply` / `destroy`.
+
+**There are no Azure secrets to configure, and you must not add any.** Auth is
+federated OIDC; there is no client-secret path anywhere in the chain. The OIDC
+ids are *identifiers, not credentials* — pass them as repo **variables**:
+
+```yaml
+jobs:
+  deploy:
+    permissions:
+      id-token: write        # REQUIRED — see the gotcha below
+      contents: read
+    uses: lvlup-sw/.github/.github/workflows/deploy.yml@v1
+    with:
+      working-directory: infra/stamp
+      mode: apply
+      environment: production        # YOUR environment owns the reviewer gate
+      client-id: ${{ vars.AZURE_CLIENT_ID }}
+      tenant-id: ${{ vars.AZURE_TENANT_ID }}
+      subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+```
+
+> **Gotcha — a missing `id-token: write` fails at workflow STARTUP.** GitHub
+> refuses to let a called workflow hold more permission than its caller, and
+> checks it *before* running anything. If your calling job omits
+> `id-token: write`, the run is marked `startup_failure` with **no jobs, no
+> logs, and no step annotation** — it looks like the workflow file is broken.
+> The real message, where it surfaces, is *"the workflow is requesting
+> 'id-token: write', but is only allowed 'id-token: none'"*. The default
+> `GITHUB_TOKEN` set has no `id-token`, so this bites every first-time caller.
+> Grant it on the **calling job**.
+
+**Workflow or action?** They are not interchangeable here:
+
+- **`deploy.yml` (workflow)** — the deploy is its own gateable job. One `uses:`.
+- **`terraform-deploy` (action)** — you need apply/destroy as **steps inside your
+  own job**: an ephemeral E2E harness whose Terraform state is job-local
+  (`-backend=false`) must keep every mode on one runner, with assertions
+  interleaved between apply and destroy. A `workflow_call` reusable cannot run as
+  steps inside your job. Both paths execute the same spine.
+
+```yaml
+# Action — apply → assert → destroy on a single runner, state never leaves it.
+steps:
+  - uses: actions/checkout@v4
+  - uses: lvlup-sw/.github/actions/terraform-deploy@v1
+    id: stamp
+    with:
+      working-directory: infra/stamp
+      mode: apply
+      backend-args: '-backend=false'
+      tf-vars: '{"location":"eastus","replicas":2}'
+      client-id: ${{ vars.AZURE_CLIENT_ID }}
+      tenant-id: ${{ vars.AZURE_TENANT_ID }}
+      subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  - run: ./scripts/assert-stamp.sh
+    env:
+      STAMP: ${{ steps.stamp.outputs.terraform-outputs }}
+  - if: always()          # destroy even when the assertions fail
+    uses: lvlup-sw/.github/actions/terraform-deploy@v1
+    with:
+      working-directory: infra/stamp
+      mode: destroy
+      backend-args: '-backend=false'
+      client-id: ${{ vars.AZURE_CLIENT_ID }}
+      tenant-id: ${{ vars.AZURE_TENANT_ID }}
+      subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+```
+
+Notes:
+
+- **`terraform-outputs` is filtered to NON-SENSITIVE values.** Every entry whose
+  `.sensitive == true` is dropped before it leaves the action. GitHub does **not**
+  mask values crossing a job/workflow output boundary, so anything you expose
+  from a `sensitive` output would be readable org-wide. Mark secrets
+  `sensitive = true` in your root module and read them from Key Vault instead.
+- **You own your environment's protection rules.** A reusable workflow cannot
+  impose a gate on its callers: `deploy.yml` applies whatever `environment:` you
+  name, and naming none means **no gate**. Put required reviewers on the
+  environment in *your* repo.
+- **`tf-vars`** is a JSON object expanded to `TF_VAR_*`. Strings pass raw; every
+  other type (number, bool, list, object) passes as compact JSON.
+- **`backend-args`** goes to `terraform init` — `-backend-config=...` for a
+  remote backend, or `-backend=false` for job-local state.
+- `skip-login` exists only for auth-free fixture runs (the org canary). Leave it
+  `false` for every real deployment.
 
 ## Migration paths by repo
 
