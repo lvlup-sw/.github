@@ -1,0 +1,257 @@
+# =============================================================================
+# Composite Action: terraform-deploy
+# =============================================================================
+# The org's shared, SECRETLESS Terraform deploy spine: federated GitHub OIDC ->
+# azure/login -> terraform init -> terraform plan|apply|destroy, exposing the
+# root module's NON-SENSITIVE outputs.
+#
+# This is the composable primitive behind the org's `deploy.yml` reusable
+# workflow (single source of truth): the workflow is a thin job-shaped preset
+# over this action.
+#
+# WHY AN ACTION AND NOT JUST A REUSABLE WORKFLOW (DR-1):
+#   The driving consumer is an ephemeral E2E harness that must run
+#   apply -> assert -> destroy as STEPS INSIDE A SINGLE JOB: its Terraform state
+#   is job-local (`-backend=false`) and never leaves the runner, so every mode
+#   has to land on the same box. A `workflow_call` reusable cannot run as steps
+#   inside someone else's job, so the mechanics live here and `deploy.yml`
+#   wraps this action for standalone (job-shaped) callers. Both paths execute
+#   the same spine.
+#
+# SECRETLESS — NON-NEGOTIABLE:
+#   Auth is federated OIDC only (`azure/login` + ARM_USE_OIDC=true). There is no
+#   ARM client-secret input, env var, or code path here, and there must never be
+#   one. The OIDC ids are ordinary inputs (repo `vars.AZURE_*`, not secrets) —
+#   they are identifiers, not credentials. The short-lived token is minted per
+#   run by GitHub, which is why the calling job needs `id-token: write`.
+#
+# OUTPUT FILTERING — THIS IS A SECURITY BOUNDARY:
+#   `terraform-outputs` is filtered to non-sensitive values only: every entry
+#   whose `.sensitive == true` is dropped before it leaves this action. A shared
+#   org action that echoed raw `terraform output` would turn every consumer's
+#   state into an org-wide leak channel — GitHub does NOT mask values crossing a
+#   job/workflow output boundary. Do not "simplify" the filter away.
+#
+# Modes (input -> terraform invocation):
+#   plan    -> terraform plan
+#   apply   -> terraform apply -auto-approve
+#   destroy -> terraform destroy -auto-approve
+#
+# The caller owns the checkout (this action never checks out code) and any
+# environment protection rules.
+# =============================================================================
+
+name: 'terraform-deploy'
+description: 'Secretless Terraform plan/apply/destroy against Azure via federated GitHub OIDC. Exposes non-sensitive terraform outputs.'
+
+inputs:
+  working-directory:
+    description: 'Directory containing the Terraform root module.'
+    required: false
+    default: '.'
+  mode:
+    description: 'Terraform operation: plan, apply, or destroy.'
+    required: true
+  terraform-version:
+    description: 'Terraform version for hashicorp/setup-terraform (exact version, constraint, or "latest").'
+    required: false
+    default: 'latest'
+  backend-args:
+    description: >-
+      Extra whitespace-separated args for `terraform init` — e.g.
+      "-backend-config=key=prod.tfstate" for a remote backend, or "-backend=false"
+      for job-local state that never leaves the runner (the E2E-harness posture).
+    required: false
+    default: ''
+  var-file:
+    description: 'Optional -var-file passed to plan/apply/destroy. Empty (default) omits the flag.'
+    required: false
+    default: ''
+  tf-vars:
+    description: >-
+      JSON object of Terraform variables, expanded to TF_VAR_* env vars. String
+      values are passed raw; every other type (number, bool, list, object) is
+      passed as compact JSON, which is what TF_VAR_ expects for complex types.
+    required: false
+    default: '{}'
+  client-id:
+    description: 'Azure AD application (client) id for federated OIDC. An identifier, not a secret — pass vars.AZURE_CLIENT_ID.'
+    required: false
+    default: ''
+  tenant-id:
+    description: 'Azure AD tenant id for federated OIDC. An identifier, not a secret — pass vars.AZURE_TENANT_ID.'
+    required: false
+    default: ''
+  subscription-id:
+    description: 'Azure subscription id for federated OIDC. An identifier, not a secret — pass vars.AZURE_SUBSCRIPTION_ID.'
+    required: false
+    default: ''
+  skip-login:
+    description: >-
+      When 'true', skip azure/login entirely for auth-free fixture runs (the
+      canary applies a provider-less fixture with no cloud contact). EVERY real
+      deployment leaves this at the default 'false' and logs in.
+    required: false
+    default: 'false'
+
+outputs:
+  terraform-outputs:
+    description: 'JSON map of the root module outputs, filtered to NON-SENSITIVE values only (sensitive entries are dropped).'
+    value: ${{ steps.tf-outputs.outputs.json }}
+
+runs:
+  using: 'composite'
+  steps:
+    # Fail fast on a bad mode BEFORE minting an OIDC token or touching Azure:
+    # an invalid mode is a caller typo, and it should not cost a cloud login.
+    - name: Validate mode
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        case "$MODE" in
+          plan|apply|destroy) echo "mode=$MODE" ;;
+          *)
+            echo "::error::Invalid mode '$MODE' (expected plan|apply|destroy)"
+            exit 1
+            ;;
+        esac
+
+    # Federated OIDC login. Skipped ONLY for auth-free fixture runs; every real
+    # mode authenticates here. Requires `id-token: write` on the calling job.
+    - name: Azure login (federated OIDC)
+      if: inputs.skip-login != 'true'
+      uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        # The wrapper rewrites terraform's stdout/exit handling; we parse
+        # `terraform output -json` directly, so it must stay off.
+        terraform_wrapper: false
+
+    # Expand the tf-vars JSON map to TF_VAR_* env vars for the steps below.
+    #
+    # Both halves of each GITHUB_ENV line are attacker-controlled in principle
+    # (a caller's JSON), so both are hardened: names must be plain identifiers,
+    # and values are written with a per-var random heredoc delimiter so a value
+    # containing an "EOF" line cannot forge an env var.
+    - name: Expand tf-vars to TF_VAR_* env
+      shell: bash
+      env:
+        TF_VARS: ${{ inputs.tf-vars }}
+      run: |
+        set -euo pipefail
+
+        if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$TF_VARS"; then
+          echo "::error::tf-vars must be a JSON object (got: $(jq -r 'type' <<<"$TF_VARS" 2>/dev/null || echo 'invalid JSON'))"
+          exit 1
+        fi
+
+        # Materialize the key list BEFORE the loop rather than piping jq into it.
+        # A `while read < <(jq ...)` would swallow a jq failure — the loop would
+        # simply see no input and the step would report "0 variables" and exit 0,
+        # silently deploying with default variables. Assigning first lets
+        # `set -e` fail the step instead.
+        expected="$(jq -r 'length' <<<"$TF_VARS")"
+        keys="$(jq -r 'keys[]' <<<"$TF_VARS")"
+
+        count=0
+        while IFS= read -r name; do
+          [[ -z "$name" ]] && continue
+          if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "::error::tf-vars key '$name' is not a valid Terraform variable name"
+            exit 1
+          fi
+          # Strings raw; every other type as compact JSON (TF_VAR_ semantics).
+          value="$(jq -r --arg k "$name" '.[$k] | if type == "string" then . else tojson end' <<<"$TF_VARS")"
+          delim="TF_VAR_EOF_${RANDOM}${RANDOM}${RANDOM}"
+          {
+            printf 'TF_VAR_%s<<%s\n' "$name" "$delim"
+            printf '%s\n' "$value"
+            printf '%s\n' "$delim"
+          } >> "$GITHUB_ENV"
+          # Name only — never echo the value.
+          echo "exported TF_VAR_$name"
+          count=$((count + 1))
+        done <<<"$keys"
+
+        # Belt-and-braces against the silent-drop failure mode above.
+        if [[ "$count" -ne "$expected" ]]; then
+          echo "::error::expanded $count TF_VAR_* but tf-vars declared $expected"
+          exit 1
+        fi
+        echo "expanded $count Terraform variable(s)"
+
+    - name: Terraform init
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BACKEND_ARGS: ${{ inputs.backend-args }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2206  # intentional word-splitting of the arg list
+        args=($BACKEND_ARGS)
+        echo "Running: terraform init -input=false ${args[*]}"
+        terraform init -input=false "${args[@]}"
+
+    # The deploy itself. ARM_USE_OIDC drives the azurerm provider's federated
+    # auth: it exchanges the GitHub-minted OIDC token (via the ACTIONS_ID_TOKEN_*
+    # env GitHub injects when id-token: write is granted) for an Azure token.
+    # No client secret is involved, here or anywhere in this action.
+    - name: Terraform ${{ inputs.mode }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        MODE: ${{ inputs.mode }}
+        VAR_FILE: ${{ inputs.var-file }}
+        ARM_USE_OIDC: 'true'
+        ARM_CLIENT_ID: ${{ inputs.client-id }}
+        ARM_TENANT_ID: ${{ inputs.tenant-id }}
+        ARM_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+      run: |
+        set -euo pipefail
+
+        args=(-input=false)
+        [[ -n "$VAR_FILE" ]] && args+=(-var-file="$VAR_FILE")
+        # plan is read-only; apply/destroy are non-interactive in CI.
+        [[ "$MODE" != "plan" ]] && args+=(-auto-approve)
+
+        echo "Running: terraform $MODE ${args[*]}"
+        terraform "$MODE" "${args[@]}"
+
+    # Expose the root module's outputs, FILTERED to non-sensitive values.
+    #
+    # `terraform output -json` emits {name: {sensitive, type, value}}; the filter
+    # drops every sensitive entry, then unwraps the survivors to {name: value}.
+    # `terraform output` fails when no state exists yet (e.g. a plan-only run),
+    # which is not an error for this action — fall back to an empty map.
+    - name: Collect non-sensitive Terraform outputs
+      id: tf-outputs
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        raw="$(terraform output -json 2>/dev/null || echo '{}')"
+        filtered="$(jq -c 'with_entries(select(.value.sensitive | not)) | map_values(.value)' <<<"$raw")"
+
+        # Report the shape only — the names/count are safe to log, and the
+        # dropped count is the audit trail for the filter actually firing.
+        total="$(jq -r 'length' <<<"$raw")"
+        kept="$(jq -r 'length' <<<"$filtered")"
+        echo "terraform outputs: $total total, $kept non-sensitive exposed, $((total - kept)) sensitive dropped"
+        echo "exposed keys: $(jq -rc 'keys' <<<"$filtered")"
+
+        delim="TF_OUT_EOF_${RANDOM}${RANDOM}${RANDOM}"
+        {
+          printf 'json<<%s\n' "$delim"
+          printf '%s\n' "$filtered"
+          printf '%s\n' "$delim"
+        } >> "$GITHUB_OUTPUT"
