@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0-preview
 
 # GitHub Actions runner
-ARG RUNNER_VERSION=2.332.0
+ARG RUNNER_VERSION=2.334.0
 RUN mkdir -p /opt/runner \
     && curl -fsSL https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     | tar xz -C /opt/runner
