@@ -59,6 +59,11 @@ on:
         required: false
         type: boolean
         default: false
+      exclude-sources:
+        description: 'Newline-separated ECMAScript regexes matched against source file paths; matching files are dropped from coverage collection. The repo-supplied targeting lever (coverage-filters is assembly-level only). Composes with exclude-generated. Opt-in; default empty leaves collection unchanged.'
+        required: false
+        type: string
+        default: ''
       runner:
         description: 'GitHub Actions runner label'
         required: false
@@ -105,5 +110,6 @@ jobs:
           skip-patterns: ${{ inputs.skip-patterns }}
           coverage-filters: ${{ inputs.coverage-filters }}
           exclude-generated: ${{ inputs.exclude-generated }}
+          exclude-sources: ${{ inputs.exclude-sources }}
           dotnet-version: ${{ inputs.dotnet-version }}
           dotnet-quality: ${{ inputs.dotnet-quality }}

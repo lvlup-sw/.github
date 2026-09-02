@@ -80,6 +80,36 @@ Opt-in; the default (`false`) leaves collection unchanged. Use it when a
 source generator emits code that isn't stamped `[ExcludeFromCodeCoverage]` and
 would otherwise dilute the coverage denominator.
 
+**Optional — target the coverage denominator at hand-written logic**
+(`exclude-sources`): newline-separated ECMAScript regexes matched against source
+file *paths*. Any file that matches is dropped from collection. It composes with
+`exclude-generated`, which supplies the generated-code rules.
+
+```yaml
+with:
+  exclude-generated: true
+  exclude-sources: |
+    .*[/\\]Program\.cs$
+```
+
+Reach for this when the gate is measuring code nobody writes. `coverage-filters`
+cannot do it — that is ReportGenerator's `-assemblyfilters`, so it only works at
+assembly granularity. A source-level `[ExcludeFromCodeCoverage]` cannot do it
+either when the generator emits C# `file`-scoped types, because those are not
+`partial` and cannot be referenced from another file.
+
+Two denominator entries this targets:
+
+| Entry | Why it dilutes | Rule |
+|---|---|---|
+| Host bootstrap (`Program.cs` top-level statements) | DI, health, and OpenAPI wiring, not logic | `.*[/\\]Program\.cs$` |
+| A generated support class the generator does not stamp | Emitted per-assembly, unreachable by tests | `exclude-generated: true` |
+
+Measured on a scaffolded service (`lvlup-sw/blockfront`, 7 tests): 7.48% with
+neither lever, 18.72% with `exclude-generated`, 30.2% with both. The last number
+is the honest one — it counts only hand-written code, and it correctly reports
+that the repo's schedule services have no tests.
+
 ### Pinning the shared gate script
 
 The `coverage-gate` **action** sparse-checks-out the shared
