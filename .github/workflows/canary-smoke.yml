@@ -51,13 +51,13 @@ jobs:
       # The composite actions are referenced locally (uses: ./actions/...), so
       # THIS repo must be checked out at the workspace root.
       - name: Checkout org repo (provides the local actions)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # bifrost provides the real AOT sample + benchmark project the canary
       # exercises. Checked out into a subdirectory so the org actions stay at
       # the workspace root.
       - name: Checkout bifrost (provides the .NET projects under test)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: lvlup-sw/bifrost
           # Pinned to a bifrost SHA for a deterministic fixture (this canary's
@@ -70,7 +70,7 @@ jobs:
           path: bifrost
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
           dotnet-quality: ${{ env.DOTNET_QUALITY }}
@@ -101,7 +101,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Checkout org repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Assert no smoke action ran (this job references neither)
         shell: bash
