@@ -97,7 +97,7 @@ runs:
   using: 'composite'
   steps:
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
         dotnet-quality: ${{ inputs.dotnet-quality }}
@@ -278,7 +278,7 @@ runs:
 
     - name: Upload coverage reports
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-reports
         path: ./TestResults/coverage.cobertura.xml

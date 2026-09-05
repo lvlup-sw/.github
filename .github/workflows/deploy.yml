@@ -173,7 +173,7 @@ jobs:
       # being deployed. persist-credentials: false keeps the job's token off
       # disk; Terraform never needs git creds.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -186,7 +186,7 @@ jobs:
       # release SHA when the next v1.x tag is cut.
       - name: Terraform deploy
         id: deploy
-        uses: lvlup-sw/.github/actions/terraform-deploy@27bfe259d15d257aa887a2a31887914e18cb9998 # feat/terraform-deploy-spine
+        uses: lvlup-sw/.github/actions/terraform-deploy@bec53a230ab98696de0779565a07e9bf5289c864 # feat/terraform-deploy-spine
         with:
           working-directory: ${{ inputs.working-directory }}
           mode: ${{ inputs.mode }}
