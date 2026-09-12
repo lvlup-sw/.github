@@ -92,7 +92,7 @@ jobs:
       tests-passed: ${{ steps.build-test.outputs.tests-passed }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # All build/test/coverage logic lives in the dotnet-build-test composite
       # action (single source of truth, DR-3). This workflow is a thin preset
@@ -103,7 +103,7 @@ jobs:
       # (.github/dependabot.yml) keeps this pin current.
       - name: Build & test
         id: build-test
-        uses: lvlup-sw/.github/actions/dotnet-build-test@289c489837981df587525b7e6ea731a4b7e91939 # v1.6
+        uses: lvlup-sw/.github/actions/dotnet-build-test@ffd6fb4979fba8a4317cca6fd7ad9ec4090acff9 # v1.6
         with:
           solution-path: ${{ inputs.solution-path }}
           test-project-patterns: ${{ inputs.test-project-patterns }}

@@ -51,11 +51,11 @@ jobs:
       # Check out THIS repo at the PR head so the proposed action source is what
       # the canary exercises (the action is resolved by local path below).
       - name: Checkout org repo (PR head)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Live fixture: a real .NET 10 / MTP repo. Pinned to a ref for determinism.
       - name: Checkout fixture (.NET repo)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: lvlup-sw/bifrost
           # Pinned SHA for a deterministic fixture (insulates this PR's CI from
@@ -135,7 +135,7 @@ jobs:
       # action already uploaded the real 'coverage-reports' artifact above.
       - name: Upload canary coverage (debug)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: canary-coverage-reports
           path: ./TestResults/coverage.cobertura.xml
@@ -156,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Settings file is well-formed XML and excludes generated code
         run: |

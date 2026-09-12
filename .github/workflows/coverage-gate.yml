@@ -70,13 +70,13 @@ jobs:
       pull-requests: write
     steps:
       - name: Download coverage artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: coverage-reports
           path: ./coverage-reports
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
@@ -96,7 +96,7 @@ jobs:
       # workflow @v1 gets a fully SHA-pinned action graph (DR-6 / T13).
       # Dependabot (.github/dependabot.yml) keeps this pin current.
       - name: Coverage gate
-        uses: lvlup-sw/.github/actions/coverage-gate@289c489837981df587525b7e6ea731a4b7e91939 # v1.6
+        uses: lvlup-sw/.github/actions/coverage-gate@ffd6fb4979fba8a4317cca6fd7ad9ec4090acff9 # v1.6
         with:
           threshold: ${{ inputs.coverage-threshold }}
           gate-mode: ${{ inputs.gate-mode }}

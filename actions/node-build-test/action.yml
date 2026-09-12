@@ -14,7 +14,7 @@
 # by the shared, unit-tested scripts/ci/merge-cobertura.mjs.
 #
 # Usage (compose with the gate in one job):
-#   - uses: actions/checkout@v4
+#   - uses: actions/checkout@v7
 #   - uses: lvlup-sw/.github/actions/node-build-test@v1.1
 #     with:
 #       working-directory: .
@@ -97,7 +97,7 @@ runs:
         echo "Detected package manager: $pm"
 
     - name: Setup Node
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
 
@@ -176,7 +176,7 @@ runs:
 
     - name: Checkout shared CI scripts (merge helper)
       if: always()
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: lvlup-sw/.github
         ref: ${{ inputs.shared-ref }}
@@ -204,7 +204,7 @@ runs:
 
     - name: Upload coverage reports
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-reports
         path: coverage-reports/Cobertura.xml
