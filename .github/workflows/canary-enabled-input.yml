@@ -91,8 +91,29 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100" \
-            --jq '.jobs[] | [.name, (.conclusion // "")] | @tsv' > jobs.tsv
+          expected_names=(
+            "disabled-build-test / Build & Test"
+            "disabled-coverage-gate / Enforce Coverage Threshold"
+            "disabled-format-check / Verify Formatting"
+            "disabled-node-build-test / Node Build & Test"
+          )
+          # A skipped inner job's record can appear a few seconds after this job
+          # starts (the first run listed three of the four). Poll briefly until
+          # every expected name reports a conclusion; the judgement below is
+          # unchanged, so a name that never appears still fails.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100" \
+              --jq '.jobs[] | [.name, (.conclusion // "")] | @tsv' > jobs.tsv
+            missing=0
+            for name in "${expected_names[@]}"; do
+              grep -qF -- "${name}"$'\t'"skipped" jobs.tsv || missing=1
+            done
+            if [[ "${missing}" -eq 0 ]]; then
+              break
+            fi
+            echo "attempt ${attempt}: not every skipped inner job is listed yet"
+            sleep 6
+          done
           cat jobs.tsv
           python3 - <<'PY'
           import json, os
