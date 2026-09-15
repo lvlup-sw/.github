@@ -6,3 +6,8 @@
 *.tfstate.backup
 provider.conf.json
 .azure/
+
+# Python (actions/ci-lanes)
+__pycache__/
+*.py[cod]
+.mypy_cache/

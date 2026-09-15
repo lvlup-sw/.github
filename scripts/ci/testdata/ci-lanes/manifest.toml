@@ -1,0 +1,15 @@
+# Fixture manifest for .github/workflows/canary-ci-lanes.yml. It plans against THIS repository's
+# own tree, so its lanes name real paths here.
+schema_version = 1
+
+[lanes.action]
+workflows = ["canary-ci-lanes.yml"]
+paths = ["actions/ci-lanes/**", "scripts/ci/testdata/ci-lanes/**"]
+
+[lanes.docs]
+workflows = ["canary-ci-lanes.yml"]
+paths = ["docs/**"]
+
+[gates.fixture-gate]
+workflow = "canary-ci-lanes.yml"
+jobs = { fixture-job = "docs" }

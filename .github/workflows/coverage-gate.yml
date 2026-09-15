@@ -61,10 +61,18 @@ on:
         required: false
         type: string
         default: ''
+      enabled:
+        description: 'When false, skip the job but keep its check name ("<caller> / Enforce Coverage Threshold"), so it can stay a required status check. Only the literal boolean false skips.'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   coverage-gate:
     name: Enforce Coverage Threshold
+    # `!= false`, not a bare `inputs.enabled`: only the literal boolean false
+    # skips, so a mistyped value runs the job instead of skipping a required check.
+    if: ${{ inputs.enabled != false }}
     runs-on: ${{ inputs.runner }}
     permissions:
       pull-requests: write

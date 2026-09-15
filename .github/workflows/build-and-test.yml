@@ -79,6 +79,11 @@ on:
         required: false
         type: string
         default: 'preview'
+      enabled:
+        description: 'When false, skip the job but keep its check name ("<caller> / Build & Test"), so it can stay a required status check. Only the literal boolean false skips. Pair with the ci-lanes action to run only when relevant.'
+        required: false
+        type: boolean
+        default: true
     outputs:
       tests-passed:
         description: 'Whether all test projects passed'
@@ -87,6 +92,9 @@ on:
 jobs:
   test:
     name: Build & Test
+    # `!= false`, not a bare `inputs.enabled`: only the literal boolean false
+    # skips, so a mistyped value runs the job instead of skipping a required check.
+    if: ${{ inputs.enabled != false }}
     runs-on: ${{ inputs.runner }}
     outputs:
       tests-passed: ${{ steps.build-test.outputs.tests-passed }}

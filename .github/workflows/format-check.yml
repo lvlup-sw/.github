@@ -58,10 +58,18 @@ on:
         required: false
         type: string
         default: 'self-hosted'
+      enabled:
+        description: 'When false, skip the job but keep its check name ("<caller> / Verify Formatting"), so it can stay a required status check. Only the literal boolean false skips.'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   format:
     name: Verify Formatting
+    # `!= false`, not a bare `inputs.enabled`: only the literal boolean false
+    # skips, so a mistyped value runs the job instead of skipping a required check.
+    if: ${{ inputs.enabled != false }}
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: write

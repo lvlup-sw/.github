@@ -1,0 +1,112 @@
+# =============================================================================
+# Canary: the `enabled` input on the reusable workflows
+# =============================================================================
+# `enabled: false` skips a reusable workflow's INNER job. A consumer makes the
+# check that inner job produces a required status check, so this canary proves
+# the two GitHub behaviours that make that safe:
+#
+#   1. NAMING. The skipped inner job still reports under its two-part name,
+#      "<caller job> / <inner job name>". Skipping the CALLER job instead
+#      reports only "<caller job>", and a ruleset that requires the two-part
+#      name then waits forever (community discussion #72708).
+#   2. CHAINING. A caller whose inner job was skipped has result `success`, so a
+#      downstream caller that needs it (coverage-gate needs build-and-test) can
+#      still run and pass its own `enabled` decision down.
+#
+# Every caller runs on ubuntu-latest and every inner job is skipped, so this
+# canary builds nothing. It reads this run's own job list through the API.
+# =============================================================================
+
+name: Canary - Reusable enabled input
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-and-test.yml'
+      - '.github/workflows/coverage-gate.yml'
+      - '.github/workflows/format-check.yml'
+      - '.github/workflows/node-build-test.yml'
+      - '.github/workflows/canary-enabled-input.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disabled-build-test:
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      enabled: false
+      solution-path: 'unused.slnx'
+      test-project-patterns: 'unused/*.Tests.csproj'
+      runner: 'ubuntu-latest'
+
+  disabled-coverage-gate:
+    needs: disabled-build-test
+    # The reusable declares pull-requests: write for its PR comment, and a
+    # caller must grant at least what the called workflow declares.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/coverage-gate.yml
+    with:
+      enabled: false
+      runner: 'ubuntu-latest'
+
+  disabled-format-check:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/format-check.yml
+    with:
+      enabled: false
+      solution-path: 'unused.slnx'
+      runner: 'ubuntu-latest'
+
+  disabled-node-build-test:
+    uses: ./.github/workflows/node-build-test.yml
+    with:
+      enabled: false
+      runner: 'ubuntu-latest'
+
+  assert-check-names:
+    name: skipped inner jobs keep their two-part check names
+    needs: [disabled-build-test, disabled-coverage-gate, disabled-format-check, disabled-node-build-test]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Assert names, conclusions and caller results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[] | [.name, (.conclusion // "")] | @tsv' > jobs.tsv
+          cat jobs.tsv
+          python3 - <<'PY'
+          import json, os
+          jobs = {}
+          with open("jobs.tsv", encoding="utf-8") as handle:
+              for line in handle:
+                  name, _, conclusion = line.rstrip("\n").partition("\t")
+                  jobs[name] = conclusion
+          expected = {
+              "disabled-build-test / Build & Test": "skipped",
+              "disabled-coverage-gate / Enforce Coverage Threshold": "skipped",
+              "disabled-format-check / Verify Formatting": "skipped",
+              "disabled-node-build-test / Node Build & Test": "skipped",
+          }
+          problems = [f"{name}: expected {want}, got {jobs.get(name, 'ABSENT')}" for name, want in expected.items() if jobs.get(name) != want]
+          # The failure mode this input exists to avoid: a single-part caller name.
+          problems += [f"{caller}: a single-part check name was reported" for caller in (n.split(" / ")[0] for n in expected) if caller in jobs]
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          problems += [f"needs.{caller}.result is {entry['result']}, expected success" for caller, entry in needs.items() if entry["result"] != "success"]
+          if problems:
+              raise SystemExit("enabled-input canary FAILED:\n  " + "\n  ".join(problems))
+          print("enabled-input canary OK: two-part skipped names, successful callers")
+          PY
