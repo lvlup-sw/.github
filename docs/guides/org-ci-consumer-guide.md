@@ -24,6 +24,7 @@ For the safe-bump and revert procedure, see
 | `benchmark-smoke` (composite action, opt-in) | `actions/benchmark-smoke` | BenchmarkDotNet `--job Dry` smoke. |
 | `deploy.yml` (reusable workflow) | `.github/workflows/deploy.yml` | Turnkey: a secretless, environment-gated Terraform `plan`/`apply`/`destroy` as its own job. |
 | `terraform-deploy` (composite action) | `actions/terraform-deploy` | Compose Terraform `plan`/`apply`/`destroy` as steps **inside your own job** — e.g. apply → assert → destroy on one runner. |
+| `ci-lanes` (composite action, `v1.7`+) | `actions/ci-lanes` | Start only the jobs a PR can affect, without letting a skip hide a failure. See [Targeting jobs to changed paths](#targeting-jobs-to-changed-paths-v17). |
 
 **Workflow vs action:** use a **reusable workflow** when the org-standard job is
 all you need (one `uses:` line). Use the **composite actions** when you need to
@@ -31,6 +32,93 @@ add your own steps *around* the standard ones — the GitHub reusable-workflow
 model cannot accept caller-injected steps, which is the whole reason the actions
 exist. Composite actions also can't declare `matrix` / `services` / job-level
 `permissions`; those stay in your caller workflow.
+
+## Targeting jobs to changed paths (`v1.7`+)
+
+Design: `docs/designs/2026-09-15-ci-lane-targeting.md`.
+
+A PR that changes only docs or config does not need to build and test
+everything. The `ci-lanes` action lets a job skip when the PR does not touch the
+paths the job reads. It is built so that a skip can never hide a failure.
+
+**1. Commit a manifest** at `.github/ci-lanes.toml`. A lane names the paths its
+jobs read and the workflow files that host those jobs:
+
+```toml
+schema_version = 1
+
+[lanes.build_test]
+workflows = ["ci.yml"]
+paths = ["src/**", "tests/**", "*.slnx", "Directory.*.props", "global.json"]
+
+[[fixtures]]                 # `check` replays these against the pinned engine
+name = "docs-only change"
+files = ["README.md"]
+expect = { build_test = false }
+```
+
+**2. Add a planner job** that needs full history (no file contents):
+
+```yaml
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      lanes: ${{ steps.plan.outputs.lanes }}
+    steps:
+      - uses: actions/checkout@<sha> # v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - id: plan
+        uses: lvlup-sw/.github/actions/ci-lanes@<sha> # v1.7
+```
+
+**3. Target each job.** Use exactly one of these two forms. `check` refuses any
+other form.
+
+```yaml
+  # An inline job: a skipped job reports success under its own check name.
+  integration-tests:
+    needs: plan
+    if: ${{ always() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build_test != 'false') }}
+
+  # A reusable-workflow caller: pass the decision down as `enabled`.
+  build-test:
+    needs: plan
+    if: always()
+    uses: lvlup-sw/.github/.github/workflows/build-and-test.yml@<sha> # v1.7
+    with:
+      enabled: ${{ needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build_test != 'false' }}
+```
+
+Why these exact forms:
+
+- **Only the exact string `'false'` skips.** If the planner fails, or reports no
+  value for the lane (for example, a typo), the job runs.
+- **Never put the skip on the caller of a reusable workflow.** A skipped caller
+  reports its check as `build-test`, not `build-test / Build & Test`. A required
+  check with the two-part name then waits forever. `enabled: false` skips the
+  inner job and keeps the two-part name.
+- **Chain reusable callers with `if: always()`.** A caller whose inner job
+  skipped has result `skipped`, not `success`. A caller that needs it (for
+  example `coverage-gate` after `build-test`) is otherwise skipped at caller
+  level and reports a single-part name. Test the upstream result yourself:
+  `if: ${{ always() && needs.build-test.result != 'failure' && needs.build-test.result != 'cancelled' }}`.
+- **Never skip a matrix job at job level unless a gate covers it.** A skipped
+  matrix never creates its per-leg checks. Declare a `[gates.<job>]` in the
+  manifest, make the gate the required check, and run
+  `ci-lanes` with `mode: verdict` in it.
+- **Pushes and every other non-PR event run every lane.** The push to your
+  default branch is the backstop for a lane that misses a path.
+
+**4. Run `check`** in a job that runs on every PR (for example, your workflow
+contract job): `uses: lvlup-sw/.github/actions/ci-lanes@<sha> # v1.7` with
+`mode: check`. It proves, among other things, that every job uses one of the forms above,
+that every glob still matches a tracked file, and that every repository path a
+job names is inside its lane.
+
+**Keep security scans unconditional.** Secret and data-leak scans must not need
+the planner: a leak can land in any path.
 
 ## Pinning
 

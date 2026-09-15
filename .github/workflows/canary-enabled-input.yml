@@ -1,0 +1,140 @@
+# =============================================================================
+# Canary: the `enabled` input on the reusable workflows
+# =============================================================================
+# `enabled: false` skips a reusable workflow's INNER job. A consumer makes the
+# check that inner job produces a required status check, so this canary proves
+# the two GitHub behaviours that make that safe:
+#
+#   1. NAMING. The skipped inner job still reports under its two-part name,
+#      "<caller job> / <inner job name>". Skipping the CALLER job instead
+#      reports only "<caller job>", and a ruleset that requires the two-part
+#      name then waits forever (community discussion #72708).
+#   2. CHAINING. A caller whose inner job was skipped has result `skipped`, NOT
+#      `success`. A downstream caller that needs it (coverage-gate needs
+#      build-and-test) is therefore skipped at CALLER level, under a single-part
+#      name, unless it runs with `if: always()` and tests the upstream result for
+#      failure itself. disabled-coverage-gate below does exactly that, and the
+#      assertion job checks both the two-part name and the `skipped` results.
+#
+# Every caller runs on ubuntu-latest and every inner job is skipped, so this
+# canary builds nothing. It reads this run's own job list through the API.
+# =============================================================================
+
+name: Canary - Reusable enabled input
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-and-test.yml'
+      - '.github/workflows/coverage-gate.yml'
+      - '.github/workflows/format-check.yml'
+      - '.github/workflows/node-build-test.yml'
+      - '.github/workflows/canary-enabled-input.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disabled-build-test:
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      enabled: false
+      solution-path: 'unused.slnx'
+      test-project-patterns: 'unused/*.Tests.csproj'
+      runner: 'ubuntu-latest'
+
+  disabled-coverage-gate:
+    needs: disabled-build-test
+    # The chaining form a consumer must use: `always()` so a `skipped` upstream
+    # caller does not skip this caller, plus an explicit failure test.
+    if: ${{ always() && needs.disabled-build-test.result != 'failure' && needs.disabled-build-test.result != 'cancelled' }}
+    # The reusable declares pull-requests: write for its PR comment, and a
+    # caller must grant at least what the called workflow declares.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/coverage-gate.yml
+    with:
+      enabled: false
+      runner: 'ubuntu-latest'
+
+  disabled-format-check:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/format-check.yml
+    with:
+      enabled: false
+      solution-path: 'unused.slnx'
+      runner: 'ubuntu-latest'
+
+  disabled-node-build-test:
+    uses: ./.github/workflows/node-build-test.yml
+    with:
+      enabled: false
+      runner: 'ubuntu-latest'
+
+  assert-check-names:
+    name: skipped inner jobs keep their two-part check names
+    needs: [disabled-build-test, disabled-coverage-gate, disabled-format-check, disabled-node-build-test]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Assert names, conclusions and caller results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          expected_names=(
+            "disabled-build-test / Build & Test"
+            "disabled-coverage-gate / Enforce Coverage Threshold"
+            "disabled-format-check / Verify Formatting"
+            "disabled-node-build-test / Node Build & Test"
+          )
+          # A skipped inner job's record can appear a few seconds after this job
+          # starts (the first run listed three of the four). Poll briefly until
+          # every expected name reports a conclusion; the judgement below is
+          # unchanged, so a name that never appears still fails.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100" \
+              --jq '.jobs[] | [.name, (.conclusion // "")] | @tsv' > jobs.tsv
+            missing=0
+            for name in "${expected_names[@]}"; do
+              grep -qF -- "${name}"$'\t'"skipped" jobs.tsv || missing=1
+            done
+            if [[ "${missing}" -eq 0 ]]; then
+              break
+            fi
+            echo "attempt ${attempt}: not every skipped inner job is listed yet"
+            sleep 6
+          done
+          cat jobs.tsv
+          python3 - <<'PY'
+          import json, os
+          jobs = {}
+          with open("jobs.tsv", encoding="utf-8") as handle:
+              for line in handle:
+                  name, _, conclusion = line.rstrip("\n").partition("\t")
+                  jobs[name] = conclusion
+          expected = {
+              "disabled-build-test / Build & Test": "skipped",
+              "disabled-coverage-gate / Enforce Coverage Threshold": "skipped",
+              "disabled-format-check / Verify Formatting": "skipped",
+              "disabled-node-build-test / Node Build & Test": "skipped",
+          }
+          problems = [f"{name}: expected {want}, got {jobs.get(name, 'ABSENT')}" for name, want in expected.items() if jobs.get(name) != want]
+          # The failure mode this input exists to avoid: a single-part caller name.
+          problems += [f"{caller}: a single-part check name was reported" for caller in (n.split(" / ")[0] for n in expected) if caller in jobs]
+          # CHAINING: a caller whose inner job skipped has result `skipped`, not `success`.
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          problems += [f"needs.{caller}.result is {entry['result']}, expected skipped" for caller, entry in needs.items() if entry["result"] != "skipped"]
+          if problems:
+              raise SystemExit("enabled-input canary FAILED:\n  " + "\n  ".join(problems))
+          print("enabled-input canary OK: two-part skipped names, skipped caller results")
+          PY

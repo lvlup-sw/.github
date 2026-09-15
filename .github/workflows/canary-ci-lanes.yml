@@ -1,0 +1,309 @@
+# =============================================================================
+# Canary: ci-lanes composite action
+# =============================================================================
+# Proves the actions/ci-lanes action on every PR that touches it:
+#
+#   (a) UNIT: mypy --strict plus the unittest suite, including the full gate
+#       verdict grid and the hostile `check` edits against a consumer fixture.
+#   (b) PLAN, LIVE: the action plans THIS PR's diff through the real wiring
+#       (setup-uv, uv-managed Python, PYTHONPATH, GITHUB_OUTPUT).
+#   (c) EXPRESSION, LIVE: GitHub itself evaluates the canonical skip. It must
+#       skip only on the exact string 'false', and RUN when the lane key is
+#       missing or the planner did not succeed. Unit tests cannot prove this:
+#       it is GitHub's expression engine, not ours.
+#   (d) VERDICT, LIVE: the action passes a licensed skip and fails an
+#       unlicensed skip, a relevant skip, a failure, and unreadable input.
+#   (e) CHECK, LIVE: the action accepts the clean consumer fixture and refuses
+#       a broken one.
+# =============================================================================
+
+name: Canary - CI Lanes Action
+
+on:
+  pull_request:
+    paths:
+      - 'actions/ci-lanes/**'
+      - 'scripts/ci/testdata/ci-lanes/**'
+      - '.github/workflows/canary-ci-lanes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # (a) --------------------------------------------------------------------------
+  unit:
+    name: ci-lanes unit tests + mypy --strict
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: actions/ci-lanes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv (pinned)
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: '0.9.26'
+          enable-cache: 'false'
+
+      - name: Type-check (mypy --strict)
+        run: >-
+          uv run --no-project --no-config --managed-python --python 3.12
+          --with 'mypy==2.3.1' --with 'types-PyYAML==6.0.12.20260906' --with 'PyYAML==6.0.2'
+          mypy --strict --no-incremental ci_lanes tests
+
+      - name: Unit, grid and hostile tests
+        run: >-
+          uv run --no-project --no-config --managed-python --python 3.12 --with 'PyYAML==6.0.2'
+          python -m unittest discover --start-directory tests --top-level-directory . --verbose
+
+  # (b) --------------------------------------------------------------------------
+  plan-live:
+    name: plan mode publishes lanes from this PR's diff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history, no blobs)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Plan
+        id: plan
+        uses: ./actions/ci-lanes
+        with:
+          manifest: scripts/ci/testdata/ci-lanes/manifest.toml
+          lane: action
+
+      - name: Assert the outputs
+        env:
+          LANES: ${{ steps.plan.outputs.lanes }}
+          RELEVANT: ${{ steps.plan.outputs.relevant }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          lanes = json.loads(os.environ["LANES"])
+          assert set(lanes) == {"action", "docs"}, lanes
+          assert set(lanes.values()) <= {"true", "false"}, lanes
+          # This canary triggers only on paths inside the `action` lane (or on
+          # dispatch, which runs every lane), so the lane must be selected.
+          assert lanes["action"] == "true", lanes
+          assert os.environ["RELEVANT"] == "true", os.environ["RELEVANT"]
+          print(f"plan outputs OK: {lanes}")
+          PY
+
+  # (c) --------------------------------------------------------------------------
+  synthetic-plan:
+    name: synthetic planner output
+    runs-on: ubuntu-latest
+    outputs:
+      lanes: ${{ steps.emit.outputs.lanes }}
+    steps:
+      - name: Emit fixed lanes
+        id: emit
+        run: echo 'lanes={"present_false":"false","present_true":"true"}' >> "$GITHUB_OUTPUT"
+
+  not-successful-plan:
+    name: planner that does not succeed
+    if: false
+    runs-on: ubuntu-latest
+    outputs:
+      lanes: ${{ steps.emit.outputs.lanes }}
+    steps:
+      - name: Emit fixed lanes
+        id: emit
+        run: echo 'lanes={"present_false":"false"}' >> "$GITHUB_OUTPUT"
+
+  expr-false-skips:
+    name: "expression: exact 'false' skips"
+    needs: synthetic-plan
+    if: ${{ always() && (needs.synthetic-plan.result != 'success' || fromJSON(needs.synthetic-plan.outputs.lanes).present_false != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ran"
+
+  expr-true-runs:
+    name: "expression: 'true' runs"
+    needs: synthetic-plan
+    if: ${{ always() && (needs.synthetic-plan.result != 'success' || fromJSON(needs.synthetic-plan.outputs.lanes).present_true != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ran"
+
+  expr-missing-key-runs:
+    name: "expression: a missing lane key runs"
+    needs: synthetic-plan
+    if: ${{ always() && (needs.synthetic-plan.result != 'success' || fromJSON(needs.synthetic-plan.outputs.lanes).absent_key != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ran"
+
+  expr-planner-not-success-runs:
+    name: "expression: a planner that did not succeed runs"
+    needs: not-successful-plan
+    if: ${{ always() && (needs.not-successful-plan.result != 'success' || fromJSON(needs.not-successful-plan.outputs.lanes).present_false != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ran"
+
+  expr-assert:
+    name: canonical skip licenses a skip only on exact 'false'
+    needs: [expr-false-skips, expr-true-runs, expr-missing-key-runs, expr-planner-not-success-runs]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert every job result
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          expected = {
+              "expr-false-skips": "skipped",
+              "expr-true-runs": "success",
+              "expr-missing-key-runs": "success",
+              "expr-planner-not-success-runs": "success",
+          }
+          actual = {job: needs[job]["result"] for job in expected}
+          assert actual == expected, f"expected {expected}, got {actual}"
+          print(f"expression semantics OK: {actual}")
+          PY
+
+  # (d) --------------------------------------------------------------------------
+  verdict-live:
+    name: verdict mode passes and fails on the right needs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Licensed skip (docs lane is 'false')
+        id: licensed
+        continue-on-error: true
+        uses: ./actions/ci-lanes
+        with:
+          mode: verdict
+          manifest: scripts/ci/testdata/ci-lanes/manifest.toml
+          gate: fixture-gate
+          needs: '{"plan":{"result":"success","outputs":{"lanes":"{\"action\":\"true\",\"docs\":\"false\"}"}},"fixture-job":{"result":"skipped","outputs":{}}}'
+
+      - name: Skip of a relevant lane
+        id: relevant-skip
+        continue-on-error: true
+        uses: ./actions/ci-lanes
+        with:
+          mode: verdict
+          manifest: scripts/ci/testdata/ci-lanes/manifest.toml
+          gate: fixture-gate
+          needs: '{"plan":{"result":"success","outputs":{"lanes":"{\"action\":\"true\",\"docs\":\"true\"}"}},"fixture-job":{"result":"skipped","outputs":{}}}'
+
+      - name: Skip after the planner failed
+        id: planner-failed
+        continue-on-error: true
+        uses: ./actions/ci-lanes
+        with:
+          mode: verdict
+          manifest: scripts/ci/testdata/ci-lanes/manifest.toml
+          gate: fixture-gate
+          needs: '{"plan":{"result":"failure","outputs":{}},"fixture-job":{"result":"skipped","outputs":{}}}'
+
+      - name: Covered job failed
+        id: job-failed
+        continue-on-error: true
+        uses: ./actions/ci-lanes
+        with:
+          mode: verdict
+          manifest: scripts/ci/testdata/ci-lanes/manifest.toml
+          gate: fixture-gate
+          needs: '{"plan":{"result":"success","outputs":{"lanes":"{\"action\":\"true\",\"docs\":\"false\"}"}},"fixture-job":{"result":"failure","outputs":{}}}'
+
+      - name: Unreadable needs
+        id: unreadable
+        continue-on-error: true
+        uses: ./actions/ci-lanes
+        with:
+          mode: verdict
+          manifest: scripts/ci/testdata/ci-lanes/manifest.toml
+          gate: fixture-gate
+          needs: 'not json'
+
+      - name: Assert every outcome
+        env:
+          LICENSED: ${{ steps.licensed.outcome }}
+          RELEVANT_SKIP: ${{ steps.relevant-skip.outcome }}
+          PLANNER_FAILED: ${{ steps.planner-failed.outcome }}
+          JOB_FAILED: ${{ steps.job-failed.outcome }}
+          UNREADABLE: ${{ steps.unreadable.outcome }}
+        run: |
+          set -euo pipefail
+          expect() {
+            if [[ "$2" != "$3" ]]; then
+              echo "::error::verdict canary: $1 expected $3, got $2"
+              exit 1
+            fi
+            echo "verdict canary: $1 -> $2"
+          }
+          expect "licensed skip" "${LICENSED}" success
+          expect "relevant skip" "${RELEVANT_SKIP}" failure
+          expect "skip after planner failure" "${PLANNER_FAILED}" failure
+          expect "covered job failed" "${JOB_FAILED}" failure
+          expect "unreadable needs" "${UNREADABLE}" failure
+
+  # (e) --------------------------------------------------------------------------
+  check-live:
+    name: check mode accepts the clean consumer and refuses a broken one
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Materialize the consumer fixtures as git repositories
+        env:
+          FIXTURE_ROOT: ${{ runner.temp }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess, sys
+          sys.path.insert(0, "actions/ci-lanes")
+          from tests.consumer import FILES
+          broken = dict(FILES)
+          ci = ".github/workflows/ci.yml"
+          assert "run: bash scripts/build.sh src/app.cs" in broken[ci]
+          broken[ci] = broken[ci].replace("run: bash scripts/build.sh src/app.cs", "run: bash scripts/build.sh scripts/audit.sh", 1)
+          git = ["git", "-c", "user.name=canary", "-c", "user.email=canary@example.invalid", "-c", "commit.gpgsign=false"]
+          for name, files in (("consumer-clean", FILES), ("consumer-broken", broken)):
+              root = pathlib.Path(os.environ["FIXTURE_ROOT"], name)
+              for relative, content in files.items():
+                  target = root / relative
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_text(content, encoding="utf-8")
+              subprocess.run([*git, "-C", str(root), "init", "-q"], check=True)
+              subprocess.run([*git, "-C", str(root), "add", "-A"], check=True)
+              subprocess.run([*git, "-C", str(root), "commit", "-q", "-m", "fixture"], check=True)
+          PY
+
+      - name: Check the clean consumer
+        uses: ./actions/ci-lanes
+        with:
+          mode: check
+          working-directory: ${{ runner.temp }}/consumer-clean
+
+      - name: Check the broken consumer
+        id: broken
+        continue-on-error: true
+        uses: ./actions/ci-lanes
+        with:
+          mode: check
+          working-directory: ${{ runner.temp }}/consumer-broken
+
+      - name: Assert the broken consumer was refused
+        env:
+          BROKEN: ${{ steps.broken.outcome }}
+        run: |
+          if [[ "${BROKEN}" != "failure" ]]; then
+            echo "::error::check canary: the broken consumer was not refused (outcome ${BROKEN})"
+            exit 1
+          fi
+          echo "check canary: broken consumer refused"
