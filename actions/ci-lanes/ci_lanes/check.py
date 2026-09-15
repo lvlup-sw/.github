@@ -24,6 +24,7 @@ job, every exemption still exists, and every fixture replays to its expected dec
 
 from __future__ import annotations
 
+import posixpath
 import re
 import subprocess
 from collections.abc import Iterable, Iterator, Mapping
@@ -41,8 +42,12 @@ LANE_REFERENCE = re.compile(
     r"fromJSON\(\s*needs\.(?P<planner>[A-Za-z_][A-Za-z0-9_-]*)\.outputs\.lanes\s*\)\.(?P<lane>[A-Za-z0-9_]+)"
 )
 _TOKEN_SEPARATORS = re.compile(r"[\s\"'`=,;()<>|&]+")
-_STEP_TEXT_KEYS = ("run", "with", "env", "working-directory")
+_ROOT_RELATIVE_STEP_KEYS = ("with", "env", "working-directory")
 _LISTED = 5
+
+# A string a job reads, paired with the directory its relative paths resolve against: "" is the
+# repository root, and None means the directory is built at run time and cannot be resolved.
+TextAt = tuple[str, "str | None"]
 
 
 def canonical_clause(planner: str, lane: str) -> str:
@@ -244,7 +249,7 @@ def _check_workflow(
             mapped = gated[job_id].jobs[job_id]
             result.require(mapped == lane_key, f"{label}: gate {gated[job_id].job} maps this job to lane {mapped}, but it reads lane {lane_key}")
 
-        texts: list[str]
+        texts: list[TextAt]
         if isinstance(job.get("uses"), str):
             enabled = _mapping(job.get("with")).get("enabled")
             expected = canonical_enable(planner, lane_key)
@@ -252,7 +257,7 @@ def _check_workflow(
                 isinstance(enabled, str) and enabled.strip() == expected,
                 f"{label}: a reusable-workflow caller that needs {planner} must pass exactly enabled: {expected}",
             )
-            texts = list(_strings(job.get("with")))
+            texts = [(text, "") for text in _strings(job.get("with"))]
         else:
             condition = job.get("if")
             expected = canonical_skip(planner, lane_key)
@@ -371,13 +376,13 @@ def _coverage(
     result: CheckResult,
     label: str,
     lane: Lane,
-    texts: Iterable[str],
+    texts: Iterable[TextAt],
     tracked: frozenset[str],
     directories: frozenset[str],
 ) -> None:
     seen: set[str] = set()
-    for text in texts:
-        for token in path_tokens(text, tracked, directories):
+    for text, base in texts:
+        for token in path_tokens(text, base, tracked, directories):
             if token in seen:
                 continue
             seen.add(token)
@@ -401,31 +406,72 @@ def _coverage(
             )
 
 
-def path_tokens(text: str, tracked: frozenset[str], directories: frozenset[str]) -> Iterator[str]:
-    """Yield the tracked files, and tracked directories written with a '/', that ``text`` names."""
+def path_tokens(text: str, base: str | None, tracked: frozenset[str], directories: frozenset[str]) -> Iterator[str]:
+    """Yield the repository paths ``text`` names, resolved against ``base``.
+
+    A token names a tracked file, or a tracked directory when it was written with a ``/`` (so a
+    prose word that happens to match a top-level directory is not read as a path). ``base`` is the
+    directory the text runs in, ``""`` for the repository root. With ``base`` None the directory is
+    built at run time, so no relative token can be attributed and nothing is yielded.
+    """
+    if base is None:
+        return
     for raw in _TOKEN_SEPARATORS.split(text):
         if not raw or "://" in raw:
             continue
         token = raw
         while token.startswith("./"):
             token = token[2:]
+        # Decide "written as a path" BEFORE trimming, so `ls release/` still names a directory.
+        written_as_path = "/" in token
         token = token.rstrip(".:/")
-        if not token or any(character in token for character in "${}*"):
+        if not token or token.startswith("/") or any(character in token for character in "${}*"):
             continue
-        if token in tracked:
-            yield token
-        elif "/" in token and token in directories:
-            yield token
+        resolved = posixpath.normpath(f"{base}/{token}" if base else token)
+        if resolved in (".", "..") or resolved.startswith("../"):
+            continue
+        if resolved in tracked:
+            yield resolved
+        elif written_as_path and resolved in directories:
+            yield resolved
 
 
-def _job_texts(job: Mapping[str, object]) -> list[str]:
-    texts = list(_strings(job.get("env"))) + list(_strings(job.get("defaults")))
+def _job_texts(job: Mapping[str, object]) -> list[TextAt]:
+    """Every string a job's non-ci-lanes steps read, with the directory its relative paths resolve in.
+
+    A ``run:`` script resolves against the step's ``working-directory``, else the job's
+    ``defaults.run.working-directory``, else the repository root. Inputs, environment values and
+    working-directory values themselves are repository-root relative.
+    """
+    default_directory = _mapping(_mapping(job.get("defaults")).get("run")).get("working-directory")
+    texts: list[TextAt] = [(text, "") for text in _strings(job.get("env"))]
+    texts += [(text, "") for text in _strings(job.get("defaults"))]
     for step in _steps(job):
         if _is_action_step(step):
             continue
-        for key in _STEP_TEXT_KEYS:
-            texts.extend(_strings(step.get(key)))
+        for key in _ROOT_RELATIVE_STEP_KEYS:
+            texts += [(text, "") for text in _strings(step.get(key))]
+        run = step.get("run")
+        if isinstance(run, str):
+            texts.append((run, _static_directory(step.get("working-directory", default_directory))))
     return texts
+
+
+def _static_directory(value: object) -> str | None:
+    """The repository-relative directory ``value`` names: ``""`` for the root, None if not static."""
+    if value is None:
+        return ""
+    if not isinstance(value, str) or "$" in value:
+        return None
+    stripped = value.strip()
+    if stripped.startswith("/"):
+        return None
+    normalized = posixpath.normpath(stripped) if stripped else "."
+    if normalized == ".":
+        return ""
+    if normalized == ".." or normalized.startswith("../"):
+        return None
+    return normalized
 
 
 def _has_full_history_checkout(steps: Iterable[Mapping[str, object]]) -> bool:

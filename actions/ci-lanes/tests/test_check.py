@@ -93,6 +93,16 @@ class CheckTests(unittest.TestCase):
                        'paths = ["src/**", "scripts/build.sh"]\nexempt_paths = { "scripts/audit.sh" = "prints a banner only" }')
         self.assertEqual(check(files).violations, [])
 
+    def test_run_paths_resolve_against_the_working_directory(self) -> None:
+        # Under working-directory docs, `README.md` is docs/README.md (untracked), not the
+        # repository-root README.md that lane docs does not match.
+        files = mutate(FILES, DOCS, "  docs:\n    runs-on: ubuntu-latest\n",
+                       "  docs:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: docs\n")
+        clean = mutate(files, DOCS, "run: cat docs/readme.md", "run: cat readme.md README.md")
+        self.assertEqual(check(clean).violations, [])
+        escaping = mutate(files, DOCS, "run: cat docs/readme.md", "run: cat readme.md ../scripts/audit.sh")
+        self.assertTrue(any("names scripts/audit.sh" in violation for violation in check(escaping).violations))
+
     def test_duplicate_yaml_key_is_indeterminate(self) -> None:
         files = mutate(FILES, CI, "  build:\n    needs: plan\n", "  build:\n    needs: plan\n    needs: plan\n")
         with self.assertRaises(Indeterminate) as caught:
