@@ -86,7 +86,7 @@ runs:
   using: 'composite'
   steps:
     - name: Checkout shared scripts
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         repository: lvlup-sw/.github
         ref: ${{ inputs.shared-ref }}
