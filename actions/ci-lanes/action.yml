@@ -50,7 +50,10 @@ inputs:
     required: false
     default: ''
   needs:
-    description: 'mode=verdict only: pass exactly ${{ toJSON(needs) }}.'
+    # GitHub evaluates expressions inside action metadata, so this description
+    # must not contain one: a literal toJSON(needs) expression here makes the
+    # whole action fail to load.
+    description: 'mode=verdict only: the gate job needs context, passed through toJSON.'
     required: false
     default: ''
   working-directory:

@@ -99,6 +99,11 @@ Why these exact forms:
   reports its check as `build-test`, not `build-test / Build & Test`. A required
   check with the two-part name then waits forever. `enabled: false` skips the
   inner job and keeps the two-part name.
+- **Chain reusable callers with `if: always()`.** A caller whose inner job
+  skipped has result `skipped`, not `success`. A caller that needs it (for
+  example `coverage-gate` after `build-test`) is otherwise skipped at caller
+  level and reports a single-part name. Test the upstream result yourself:
+  `if: ${{ always() && needs.build-test.result != 'failure' && needs.build-test.result != 'cancelled' }}`.
 - **Never skip a matrix job at job level unless a gate covers it.** A skipped
   matrix never creates its per-leg checks. Declare a `[gates.<job>]` in the
   manifest, make the gate the required check, and run

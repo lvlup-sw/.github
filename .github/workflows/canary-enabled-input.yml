@@ -9,9 +9,12 @@
 #      "<caller job> / <inner job name>". Skipping the CALLER job instead
 #      reports only "<caller job>", and a ruleset that requires the two-part
 #      name then waits forever (community discussion #72708).
-#   2. CHAINING. A caller whose inner job was skipped has result `success`, so a
-#      downstream caller that needs it (coverage-gate needs build-and-test) can
-#      still run and pass its own `enabled` decision down.
+#   2. CHAINING. A caller whose inner job was skipped has result `skipped`, NOT
+#      `success`. A downstream caller that needs it (coverage-gate needs
+#      build-and-test) is therefore skipped at CALLER level, under a single-part
+#      name, unless it runs with `if: always()` and tests the upstream result for
+#      failure itself. disabled-coverage-gate below does exactly that, and the
+#      assertion job checks both the two-part name and the `skipped` results.
 #
 # Every caller runs on ubuntu-latest and every inner job is skipped, so this
 # canary builds nothing. It reads this run's own job list through the API.
@@ -43,6 +46,9 @@ jobs:
 
   disabled-coverage-gate:
     needs: disabled-build-test
+    # The chaining form a consumer must use: `always()` so a `skipped` upstream
+    # caller does not skip this caller, plus an explicit failure test.
+    if: ${{ always() && needs.disabled-build-test.result != 'failure' && needs.disabled-build-test.result != 'cancelled' }}
     # The reusable declares pull-requests: write for its PR comment, and a
     # caller must grant at least what the called workflow declares.
     permissions:
@@ -104,9 +110,10 @@ jobs:
           problems = [f"{name}: expected {want}, got {jobs.get(name, 'ABSENT')}" for name, want in expected.items() if jobs.get(name) != want]
           # The failure mode this input exists to avoid: a single-part caller name.
           problems += [f"{caller}: a single-part check name was reported" for caller in (n.split(" / ")[0] for n in expected) if caller in jobs]
+          # CHAINING: a caller whose inner job skipped has result `skipped`, not `success`.
           needs = json.loads(os.environ["NEEDS_JSON"])
-          problems += [f"needs.{caller}.result is {entry['result']}, expected success" for caller, entry in needs.items() if entry["result"] != "success"]
+          problems += [f"needs.{caller}.result is {entry['result']}, expected skipped" for caller, entry in needs.items() if entry["result"] != "skipped"]
           if problems:
               raise SystemExit("enabled-input canary FAILED:\n  " + "\n  ".join(problems))
-          print("enabled-input canary OK: two-part skipped names, successful callers")
+          print("enabled-input canary OK: two-part skipped names, skipped caller results")
           PY

@@ -77,7 +77,7 @@ GitHub compares loosely and coerces mismatched types to numbers. So `!= 'false'`
   - (c) GitHub's own evaluation of the canonical skip: exact `'false'` skips; `'true'`, a missing key, and a planner that did not succeed all run.
   - (d) `verdict` passes a licensed skip and fails an unlicensed skip, a relevant skip, a failure, and unreadable input.
   - (e) `check` accepts the clean consumer fixture and refuses a broken one.
-- **`canary-enabled-input.yml`** calls all four reusables with `enabled: false`. It then reads the run's job list and asserts two things. First, each skipped inner job reports under `<caller> / <job name>`, and no single-part caller name appears. Second, every caller result is `success`, so a downstream caller that needs it can still run.
+- **`canary-enabled-input.yml`** calls all four reusables with `enabled: false`. It then reads the run's job list and asserts two things. First, each skipped inner job reports under `<caller> / <job name>`, and no single-part caller name appears. Second, every caller result is `skipped`, not `success`. The first canary run proved this: a downstream caller that needs a disabled caller is skipped at caller level and reports a single-part name. A chained caller must therefore run with `if: always()` and test the upstream result for `failure` or `cancelled` itself.
 
 ## Versioning / rollout
 
