@@ -37,7 +37,11 @@ from .errors import Indeterminate
 from .manifest import Gate, Lane, Manifest
 from .plan import plan_for_files
 
-ACTION_REFERENCE = re.compile(r"lvlup-sw/\.github/actions/ci-lanes@[0-9a-f]{40}|\./actions/ci-lanes")
+# Paved-road pin is @v1 (or @v1.N). A 40-char SHA remains valid for repos that
+# opt out of the moving tag. The in-repo relative path is the canary / self-test.
+ACTION_REFERENCE = re.compile(
+    r"lvlup-sw/\.github/actions/ci-lanes@(?:[0-9a-f]{40}|v1(?:\.[0-9]+)?)|\./actions/ci-lanes"
+)
 LANE_REFERENCE = re.compile(
     r"fromJSON\(\s*needs\.(?P<planner>[A-Za-z_][A-Za-z0-9_-]*)\.outputs\.lanes\s*\)\.(?P<lane>[A-Za-z0-9_]+)"
 )

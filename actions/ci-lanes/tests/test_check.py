@@ -115,6 +115,26 @@ class CheckTests(unittest.TestCase):
         with self.assertRaises(Indeterminate):
             check(files)
 
+    def test_org_v1_tag_is_a_recognized_ci_lanes_pin(self) -> None:
+        files = mutate(FILES, CI, "uses: ./actions/ci-lanes", "uses: lvlup-sw/.github/actions/ci-lanes@v1")
+        files = mutate(files, MATRIX, "uses: ./actions/ci-lanes", "uses: lvlup-sw/.github/actions/ci-lanes@v1")
+        files = mutate(files, DOCS, "uses: ./actions/ci-lanes", "uses: lvlup-sw/.github/actions/ci-lanes@v1")
+        self.assertEqual(check(files).violations, [])
+
+    def test_org_v1_minor_tag_and_sha_are_recognized_ci_lanes_pins(self) -> None:
+        sha = "c5fdda17097ea88711f93a0deb8e951481c784cc"
+        for pin in (f"lvlup-sw/.github/actions/ci-lanes@v1.7", f"lvlup-sw/.github/actions/ci-lanes@{sha}"):
+            with self.subTest(pin=pin):
+                files = mutate(FILES, CI, "uses: ./actions/ci-lanes", f"uses: {pin}")
+                files = mutate(files, MATRIX, "uses: ./actions/ci-lanes", f"uses: {pin}")
+                files = mutate(files, DOCS, "uses: ./actions/ci-lanes", f"uses: {pin}")
+                self.assertEqual(check(files).violations, [])
+
+    def test_floating_main_pin_is_not_a_ci_lanes_action(self) -> None:
+        files = mutate(FILES, CI, "uses: ./actions/ci-lanes", "uses: lvlup-sw/.github/actions/ci-lanes@main")
+        result = check(files)
+        self.assertTrue(any("must run the ci-lanes action exactly once" in v for v in result.violations))
+
 
 if __name__ == "__main__":
     unittest.main()
