@@ -65,12 +65,12 @@ expect = { build_test = false }
     outputs:
       lanes: ${{ steps.plan.outputs.lanes }}
     steps:
-      - uses: actions/checkout@<sha> # v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           filter: blob:none
       - id: plan
-        uses: lvlup-sw/.github/actions/ci-lanes@<sha> # v1.7
+        uses: lvlup-sw/.github/actions/ci-lanes@v1
 ```
 
 **3. Target each job.** Use exactly one of these two forms. `check` refuses any
@@ -86,8 +86,9 @@ other form.
   build-test:
     needs: plan
     if: always()
-    uses: lvlup-sw/.github/.github/workflows/build-and-test.yml@<sha> # v1.7
+    uses: lvlup-sw/.github/.github/workflows/build-and-test.yml@v1
     with:
+      runner: ubuntu-latest
       enabled: ${{ needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build_test != 'false' }}
 ```
 
@@ -112,7 +113,7 @@ Why these exact forms:
   default branch is the backstop for a lane that misses a path.
 
 **4. Run `check`** in a job that runs on every PR (for example, your workflow
-contract job): `uses: lvlup-sw/.github/actions/ci-lanes@<sha> # v1.7` with
+contract job): `uses: lvlup-sw/.github/actions/ci-lanes@v1` with
 `mode: check`. It proves, among other things, that every job uses one of the forms above,
 that every glob still matches a tracked file, and that every repository path a
 job names is inside its lane.
@@ -122,15 +123,24 @@ the planner: a leak can land in any path.
 
 ## Pinning
 
-Pin every org `uses:` to an **immutable ref**. Two options:
+Pin every org `uses:` to **`@v1`**. That is the paved road: the template emits
+it, `template-smoke.sh` asserts it, and every active consumer tracks the same
+line. A moving tag has no review gate on the consumer side — before a maintainer
+moves `v1`, follow the tag-move procedure in
+`docs/runbooks/org-ci-parity-and-rollback.md`.
 
-- **`@v1` (tag)** — human-readable, friendly with the bump bot. Recommended for
-  most repos.
-- **`@<40-char SHA>` (commit)** — strongest supply-chain guarantee (a tag can be
-  moved; a SHA cannot). Recommended for security-sensitive repos.
+**`@<40-char SHA>` is an opt-out**, not a second paved road. Use it only when a
+repo explicitly chooses the stronger supply-chain guarantee (a tag can be moved;
+a SHA cannot). Do not mix SHA and `@v1` in the same repository.
 
-Both resolve to the same release. **Never pin `@main`** — it floats and defeats
-reproducibility.
+**Never pin `@main`** — it floats and defeats reproducibility.
+
+**Always pass `runner:`** on `build-and-test.yml` and `coverage-gate.yml`. The
+reusable default is `self-hosted`, which matches no runner registered in this
+org. Omitting it queues a required check forever. Pass `ubuntu-latest` unless
+the repo has a documented, registered runner label of its own. Do not rely on
+the default changing in a later release — a tag move must not silently retarget
+runners.
 
 ```yaml
 # Reusable workflow — pin the workflow file:
@@ -138,6 +148,7 @@ jobs:
   test:
     uses: lvlup-sw/.github/.github/workflows/build-and-test.yml@v1
     with:
+      runner: ubuntu-latest
       solution-path: MyProject.slnx
       test-project-patterns: |
         **/tests/**/*.Tests.csproj
@@ -146,6 +157,7 @@ jobs:
     needs: test
     uses: lvlup-sw/.github/.github/workflows/coverage-gate.yml@v1
     with:
+      runner: ubuntu-latest
       coverage-threshold: 90
 ```
 
@@ -218,10 +230,14 @@ same ref as the action — otherwise the script floats on `main`:
 
 ### Staying current
 
+`@v1` consumers pick up a new release when the org moves the tag — there is no
+Dependabot PR on their side. That is why the tag-move procedure in
+`docs/runbooks/org-ci-parity-and-rollback.md` exists.
+
 Action pins in **this org repo** are bumped by **Dependabot**
-(`.github/dependabot.yml`). In **your** repo, add a `github-actions` Dependabot
-(or Renovate) entry so your pins to `@v1`/`@<sha>` get update PRs as the org cuts
-new releases. Don't run both bots against the same `uses:` refs.
+(`.github/dependabot.yml`). A consumer that opted out to a SHA pin should add a
+`github-actions` Dependabot (or Renovate) entry so those pins get update PRs.
+Don't run both bots against the same `uses:` refs.
 
 ## Coverage gate: defaults and opt-in
 
@@ -245,6 +261,7 @@ Opt into stricter gating per repo:
   coverage:
     uses: lvlup-sw/.github/.github/workflows/coverage-gate.yml@v1
     with:
+      runner: ubuntu-latest
       coverage-threshold: 80
       gate-mode: per-assembly
       metrics: line+branch
@@ -256,6 +273,7 @@ Opt into stricter gating per repo:
   coverage:
     uses: lvlup-sw/.github/.github/workflows/coverage-gate.yml@v1
     with:
+      runner: ubuntu-latest
       coverage-threshold: 80
       gate-mode: per-assembly
       assembly-thresholds: |
