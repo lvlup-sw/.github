@@ -49,7 +49,7 @@ GitHub compares loosely and coerces mismatched types to numbers. So `!= 'false'`
 
 ### 2. The `enabled` input on the reusable workflows
 
-`build-and-test.yml`, `coverage-gate.yml`, `format-check.yml`, and `node-build-test.yml` gain `enabled` (boolean, default `true`). The inner job gets `if: ${{ inputs.enabled != false }}`.
+`build-and-test.yml`, `coverage-gate.yml`, `format-check.yml`, and `node-build-test.yml` gain `enabled` (boolean, default `true`). The inner job gets `if: ${{ inputs.enabled != false }}`. `dependency-review.yml` gained the same input afterwards, for the same reason: it is a PR-time gate a docs-only change cannot affect. Two are excluded. `update-baseline.yml` runs on pushes to the default branch, where every lane runs. `codeql.yml` names its inner job `Analyze (${{ inputs.languages }})`, and GitHub does not evaluate the name of a job it never starts, so a skipped run reports a different check context than a real one — `enabled:` there would break the required check instead of preserving it. Giving codeql the input requires a static inner job name, which changes the required check name in every consumer ruleset and is therefore its own coordinated change.
 
 - The caller always runs, so the check keeps its two-part name while the inner job skips. That removes behaviour 2 for the org's own reusables.
 - The default keeps every existing consumer byte-identical.
