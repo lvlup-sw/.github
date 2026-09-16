@@ -106,11 +106,22 @@ Why these exact forms:
   level and reports a single-part name. Test the upstream result yourself:
   `if: ${{ always() && needs.build-test.result != 'failure' && needs.build-test.result != 'cancelled' }}`.
 - **Which reusables accept `enabled:`.** `build-and-test`, `coverage-gate`,
-  `format-check`, `node-build-test`, `codeql` and `dependency-review`. A
-  reusable that does not take it can only be skipped at caller level, which is
-  the single-part-name trap above, so do not lane-target one until it has the
-  input. `update-baseline` deliberately does not take it: consumers call it only
-  on pushes to the default branch, where every lane runs anyway.
+  `format-check`, `node-build-test` and `dependency-review`. A reusable that
+  does not take it can only be skipped at caller level, which is the
+  single-part-name trap above, so do not lane-target one until it has the input.
+  Two are deliberately without it: `update-baseline`, because consumers call it
+  only on pushes to the default branch where every lane runs anyway, and
+  `codeql`, because its inner job name is dynamic — see below.
+- **`enabled:` requires a STATIC inner job name.** GitHub does not evaluate the
+  `name:` of a job it never starts. `codeql`'s inner job is
+  `Analyze (${{ inputs.languages }})`, so a skipped run reports the raw
+  `Analyze (${{ inputs.languages }})` while a real run reports
+  `Analyze (csharp)` — two different check contexts. Skipping it would stop a
+  required `codeql / Analyze (csharp)` from ever reporting, which is the very
+  thing this input exists to prevent. Do not add `enabled:` to a reusable whose
+  inner job name interpolates an input without making that name static first,
+  and remember that such a rename changes the required check name in every
+  consumer's ruleset.
 - **Never skip a matrix job at job level unless a gate covers it.** A skipped
   matrix never creates its per-leg checks. Declare a `[gates.<job>]` in the
   manifest, make the gate the required check, and run
