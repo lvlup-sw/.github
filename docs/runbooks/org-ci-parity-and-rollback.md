@@ -75,9 +75,64 @@ no code edit — instant and total.
 4. Reopen the `.github` issue for the regression and re-pin forward only after
    the parity gate passes again.
 
+## Tag move: before a maintainer moves `v1`
+
+Moving the `v1` tag changes the resolved ref for every `@v1` consumer with no
+PR, no approval, and no CI on their side. The consumer-bump procedure above does
+not cover this direction. Run this **before** `git tag -f v1` / a GitHub release
+that retargets `v1`.
+
+### Who to parity-check, and in what order
+
+A tag move that only adds an opt-in input (`enabled`, `exclude-sources`) still
+needs a default-input check: the load-bearing promise is that defaults stay
+byte-identical. Stop at the first consumer whose coverage verdict or PR comment
+differs; do not move the tag.
+
+1. **This repo's canaries.** `canary-coverage-gate.yml` `default-parity` and
+   `canary-enabled-input.yml` on `main` after the release commit. If those are
+   red, the building blocks are not safe to point `v1` at.
+2. **strategos** — reference consumer of the reusable workflows
+   (`build-and-test.yml` / `coverage-gate.yml` at default-ish inputs, required
+   two-part checks).
+3. **basileus** — second .NET reusable consumer; historically inherited the
+   unrunnable `self-hosted` default. Confirm `runner:` is still passed.
+4. **bifrost** — org `canary-build-test` fixture and a composite-action
+   consumer (`dotnet-build-test`, `coverage-gate.yml`). A behavior change here
+   also breaks this repo's canary.
+5. **The rest, in any order, only if 1–4 match:** charter, pythia, brokerdex,
+   blockfront, hierophant. Skip DataFerry (archived). Skip exarchos and
+   ares-elite-platform unless the release changes `actions/ci-lanes` — they do
+   not call the coverage reusable.
+
+### What to capture
+
+On each consumer, open a no-op PR against current `v1` (or wait for a live PR
+that already runs coverage). Then, on a throwaway branch, temporarily pin that
+consumer at the **proposed** commit (the SHA `v1` will move to) with no input
+changes, and open a second PR.
+
+Compare:
+
+- Coverage job **verdict** (pass/fail) identical.
+- Coverage **PR comment** identical line-for-line.
+- Required check **names** still report. A skipped reusable inner job must keep
+  its two-part name (`build-test / Build & Test`). A missing name is a release
+  bug, not a consumer bug.
+
+Gate on a zero diff. Any diff → do not move `v1`; file against this repo.
+
+### After the move
+
+1. Confirm `git rev-parse v1` equals the intended commit.
+2. Re-run the org canaries on `main`.
+3. Watch the next PR on strategos and bifrost. If either is red in a way the
+   pre-move PRs were not, revert `v1` to the previous commit (a tag move is the
+   rollback) and file the regression here.
+
 ### Status
 
-No consumer is pinned to `@v1` yet, so there is nothing live to roll back *from*
-today; this is the ready-to-run procedure. It gets its first real exercise at the
-first consumer bump (bifrost via `bifrost#39`, then strategos/basileus), which is
-the natural and honest place to validate it end-to-end.
+The consumer-bump procedure is for a repo changing *its own* pin. The tag-move
+procedure is for a maintainer changing the pin *under* every `@v1` consumer.
+Use both. Do not treat a green canary in this repo as a substitute for
+strategos / basileus / bifrost.
