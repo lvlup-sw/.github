@@ -29,6 +29,8 @@ on:
       - '.github/workflows/coverage-gate.yml'
       - '.github/workflows/format-check.yml'
       - '.github/workflows/node-build-test.yml'
+      - '.github/workflows/codeql.yml'
+      - '.github/workflows/dependency-review.yml'
       - '.github/workflows/canary-enabled-input.yml'
   workflow_dispatch:
 
@@ -74,9 +76,36 @@ jobs:
       enabled: false
       runner: 'ubuntu-latest'
 
+  # CodeQL and dependency-review are the two PR-time gates a consumer most wants
+  # to lane-target: a docs-only PR changes no C# and no dependency, so both are
+  # pure cost there. Neither could be skipped safely before, because skipping the
+  # CALLER reports a single-part name and a required "codeql / Analyze (csharp)"
+  # context would never report. They take `enabled:` for the same reason the
+  # others do, and are proved here the same way.
+  disabled-codeql:
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: ./.github/workflows/codeql.yml
+    with:
+      enabled: false
+      languages: csharp
+      build-mode: none
+      runner: 'ubuntu-latest'
+
+  disabled-dependency-review:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/dependency-review.yml
+    with:
+      enabled: false
+      runner: 'ubuntu-latest'
+
   assert-check-names:
     name: skipped inner jobs keep their two-part check names
-    needs: [disabled-build-test, disabled-coverage-gate, disabled-format-check, disabled-node-build-test]
+    needs: [disabled-build-test, disabled-coverage-gate, disabled-format-check, disabled-node-build-test, disabled-codeql, disabled-dependency-review]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -96,6 +125,8 @@ jobs:
             "disabled-coverage-gate / Enforce Coverage Threshold"
             "disabled-format-check / Verify Formatting"
             "disabled-node-build-test / Node Build & Test"
+            "disabled-codeql / Analyze (csharp)"
+            "disabled-dependency-review / Dependency Review"
           )
           # A skipped inner job's record can appear a few seconds after this job
           # starts (the first run listed three of the four). Poll briefly until
@@ -127,6 +158,8 @@ jobs:
               "disabled-coverage-gate / Enforce Coverage Threshold": "skipped",
               "disabled-format-check / Verify Formatting": "skipped",
               "disabled-node-build-test / Node Build & Test": "skipped",
+              "disabled-codeql / Analyze (csharp)": "skipped",
+              "disabled-dependency-review / Dependency Review": "skipped",
           }
           problems = [f"{name}: expected {want}, got {jobs.get(name, 'ABSENT')}" for name, want in expected.items() if jobs.get(name) != want]
           # The failure mode this input exists to avoid: a single-part caller name.

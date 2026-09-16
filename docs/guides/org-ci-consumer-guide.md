@@ -105,6 +105,12 @@ Why these exact forms:
   example `coverage-gate` after `build-test`) is otherwise skipped at caller
   level and reports a single-part name. Test the upstream result yourself:
   `if: ${{ always() && needs.build-test.result != 'failure' && needs.build-test.result != 'cancelled' }}`.
+- **Which reusables accept `enabled:`.** `build-and-test`, `coverage-gate`,
+  `format-check`, `node-build-test`, `codeql` and `dependency-review`. A
+  reusable that does not take it can only be skipped at caller level, which is
+  the single-part-name trap above, so do not lane-target one until it has the
+  input. `update-baseline` deliberately does not take it: consumers call it only
+  on pushes to the default branch, where every lane runs anyway.
 - **Never skip a matrix job at job level unless a gate covers it.** A skipped
   matrix never creates its per-leg checks. Declare a `[gates.<job>]` in the
   manifest, make the gate the required check, and run
