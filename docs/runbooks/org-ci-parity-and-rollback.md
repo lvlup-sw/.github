@@ -122,6 +122,27 @@ Compare:
 
 Gate on a zero diff. Any diff → do not move `v1`; file against this repo.
 
+### Version tags are immutable; only the major alias moves
+
+The `version-tags-immutable` ruleset denies `update` and `deletion` on
+`refs/tags/v*.*`. A `v1.N` cut therefore cannot be force-moved or deleted once
+pushed. The pattern needs a literal dot, so `v1` (and a future `v2`) stays
+movable — the alias is the only thing this procedure advances.
+
+This exists because a consumer can bind a digest to a workflow's bytes. Pin an
+authority digest, an attestation, or a recorded job hash against a ref that can
+move, and the digest keeps matching while the code behind the ref changes. That
+is the substitution such a digest exists to prevent. `lvlup-sw/hierophant` does
+exactly this, which is why it SHA-pins rather than using `@v1`.
+
+Consequences for a maintainer:
+
+- **Never re-cut a published `v1.N`.** A bad release is superseded by the next
+  cut, not repaired in place. Roll consumers back by repinning, as below.
+- The `v1` alias is unaffected and still moves through the procedure above.
+- Enabling **Settings -> General -> Releases -> Immutable releases** covers
+  newly published releases; the ruleset is what covers the tags already cut.
+
 ### After the move
 
 1. Confirm `git rev-parse v1` equals the intended commit.
