@@ -112,6 +112,14 @@ Why these exact forms:
   Two are deliberately without it: `update-baseline`, because consumers call it
   only on pushes to the default branch where every lane runs anyway, and
   `codeql`, because its inner job name is dynamic — see below.
+- **`@v1` moves; `v1.N` cuts do not.** The `version-tags-immutable` ruleset
+  denies update and deletion on `refs/tags/v*.*`, so a version cut is a stable
+  ref. Pin `@v1` for the paved road. Pin a **commit SHA** (with a trailing
+  `# v1.N` comment so Dependabot can bump it) if your repo binds a digest to its
+  workflow bytes — a recorded job hash, a release-authority state, an
+  attestation over job text. Against a moving ref such a digest keeps matching
+  while the code behind it changes, which is the failure it exists to catch.
+  `lvlup-sw/hierophant` is the worked example.
 - **`enabled:` requires a STATIC inner job name.** GitHub does not evaluate the
   `name:` of a job it never starts. `codeql`'s inner job is
   `Analyze (${{ inputs.languages }})`, so a skipped run reports the raw
