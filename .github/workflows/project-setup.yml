@@ -31,7 +31,7 @@ on:
 env:
   PROJECT_NUMBER: 3
   ORG: lvlup-sw
-  REPOS: 'ares-elite-platform,agentic-workflow,agentic-engine,lvlup-claude,DataFerry'
+  REPOS: 'ares-elite-platform,agentic-workflow,agentic-engine,lvlup-claude,DataFerry,tower-autobattler'
 
 jobs:
   setup-project:
