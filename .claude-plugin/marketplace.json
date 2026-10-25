@@ -5,8 +5,8 @@
     "email": "oss@lvlup.software"
   },
   "metadata": {
-    "description": "Production-quality agent tools for Claude Code",
-    "version": "1.0.0"
+    "description": "Agent tools for Codex and Claude Code",
+    "version": "1.1.0"
   },
   "plugins": [
     {
@@ -49,6 +49,33 @@
         "architecture",
         "design-patterns",
         "composable-skills"
+      ]
+    },
+    {
+      "name": "charter",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/lvlup-sw/charter.git",
+        "path": "./plugins/charter",
+        "sha": "924cd316d7c464e454821499c9bef9849fdf88e0"
+      },
+      "description": "Linux x64 private desktop preview: publish HTML, Markdown and mixed decks to Charter, then retrieve source-bound review feedback and publish revisions. Requires access to the private Charter repository.",
+      "version": "0.1.0-prod.c3deac2",
+      "author": {
+        "name": "LevelUp Software"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "productivity",
+      "tags": [
+        "charter",
+        "publishing",
+        "document-review",
+        "mcp",
+        "linux-x64",
+        "preview"
       ]
     }
   ]
