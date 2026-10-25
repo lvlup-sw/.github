@@ -25,6 +25,7 @@ For the safe-bump and revert procedure, see
 | `deploy.yml` (reusable workflow) | `.github/workflows/deploy.yml` | Turnkey: a secretless, environment-gated Terraform `plan`/`apply`/`destroy` as its own job. |
 | `terraform-deploy` (composite action) | `actions/terraform-deploy` | Compose Terraform `plan`/`apply`/`destroy` as steps **inside your own job** — e.g. apply → assert → destroy on one runner. |
 | `ci-lanes` (composite action, `v1.7`+) | `actions/ci-lanes` | Start only the jobs a PR can affect, without letting a skip hide a failure. See [Targeting jobs to changed paths](#targeting-jobs-to-changed-paths-v17). |
+| `workflow-hygiene` (composite action, `v1.9`+) | `actions/workflow-hygiene` | Fail a PR when a pull-request workflow never cancels superseded runs, or a job has no `timeout-minutes`. See [Workflow hygiene](#workflow-hygiene-v19). |
 
 **Workflow vs action:** use a **reusable workflow** when the org-standard job is
 all you need (one `uses:` line). Use the **composite actions** when you need to
@@ -80,7 +81,7 @@ other form.
   # An inline job: a skipped job reports success under its own check name.
   integration-tests:
     needs: plan
-    if: ${{ always() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build_test != 'false') }}
+    if: ${{ !cancelled() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build_test != 'false') }}
 
   # A reusable-workflow caller: pass the decision down as `enabled`.
   build-test:
@@ -94,6 +95,11 @@ other form.
 
 Why these exact forms:
 
+- **Lead with `!cancelled()`, not `always()`.** GitHub starts an `always()` job
+  even after its run is cancelled. With `cancel-in-progress`, a superseded run then
+  starts every job that was still pending. `check` still accepts `always()` (since
+  `v1.9`), but new and edited workflows use `!cancelled()`. A gate job uses
+  `if: ${{ !cancelled() }}`.
 - **Only the exact string `'false'` skips.** If the planner fails, or reports no
   value for the lane (for example, a typo), the job runs.
 - **Never put the skip on the caller of a reusable workflow.** A skipped caller
@@ -137,6 +143,68 @@ job names is inside its lane.
 
 **Keep security scans unconditional.** Secret and data-leak scans must not need
 the planner: a leak can land in any path.
+
+## Workflow hygiene (`v1.9`+)
+
+Two workflow defects burn Actions minutes and nobody sees them in review:
+
+- A pull-request workflow with no `cancel-in-progress`. Each push to a PR starts
+  a full new run, and the old run keeps running and billing.
+- A job with no `timeout-minutes`. A hung job runs for GitHub's 360-minute
+  default.
+
+The `workflow-hygiene` action scans `.github/workflows/*.yml` and `*.yaml` and
+fails on both. It prints one line per violation, `<workflow-file>:<job>: <message>`,
+and an `::error` annotation for each.
+
+**Rule 1 — location `<workflow-file>:*`.** A workflow triggered by `pull_request`
+or `pull_request_target` (string, list or mapping form of `on:`) must carry
+`concurrency` with a truthy `cancel-in-progress`, at workflow level or on every
+job. Truthy is `true`, `'true'`, or a `${{ }}` expression. The string form
+`concurrency: <group>` never cancels. Use this block: it cancels superseded PR
+runs and never groups or cancels pushes to the default branch.
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+```
+
+Key non-PR events on `github.run_id`. A plain `github.ref` group still cancels a
+*pending* push run when two merges land close together, so a commit on `main`
+loses its CI evidence.
+
+**Rule 2 — location `<workflow-file>:<job>`.** Every job that is not a
+reusable-workflow call sets `timeout-minutes` to a positive number or an
+expression. A caller with job-level `uses:` cannot set it; the called
+workflow's own jobs are checked where they are defined.
+
+**Run it** in a job that runs on every PR (for example, your workflow contract
+job):
+
+```yaml
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: lvlup-sw/.github/actions/workflow-hygiene@v1
+```
+
+Input: `root` (default `.`), the directory that holds `.github/workflows`.
+Exit codes: 0 pass, 1 violation, 2 INDETERMINATE. Zero workflow files, a file
+that is not valid YAML, or an unreadable exemption file is exit 2, never a pass.
+
+**Exemptions** go in `.github/workflow-hygiene.toml`. Each one needs a reason:
+
+```toml
+[exempt]
+"release.yml:publish" = "the registry publish has its own retry budget"
+"deploy.yml:*" = "a started deploy must finish; a newer run queues behind it"
+```
+
+`<file>:<job>` exempts that job from rule 2. `<file>:*` exempts that workflow
+from rule 1. Neither stands in for the other. An empty reason, a malformed key,
+and an exemption that matches no violation are violations: a stale exemption is
+cover for the next job that drifts.
 
 ## Pinning
 

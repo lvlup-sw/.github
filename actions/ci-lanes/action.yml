@@ -16,7 +16,9 @@
 #            workflows that read it still agree (needs PyYAML, pinned here).
 #
 # The one skip expression a targeted inline job may carry (`check` pins it):
-#   if: ${{ always() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).<lane> != 'false') }}
+#   if: ${{ !cancelled() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).<lane> != 'false') }}
+# `check` still accepts the older `always()` guard, but a cancelled run then starts
+# every pending job. Use `!cancelled()` with `cancel-in-progress`.
 # Only the exact string 'false' licenses a skip. A failed planner, or a lane
 # key the planner did not report, runs the job.
 #

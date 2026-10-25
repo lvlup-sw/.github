@@ -7,7 +7,7 @@
 provider.conf.json
 .azure/
 
-# Python (actions/ci-lanes)
+# Python (actions/ci-lanes, actions/workflow-hygiene)
 __pycache__/
 *.py[cod]
 .mypy_cache/
