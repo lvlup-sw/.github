@@ -90,6 +90,30 @@ Urgent keywords: `urgent`, `critical`, `blocker`, `p0`, `asap`, `emergency`
 
 ## Usage
 
+### Organization plugin catalog
+
+The existing `.claude-plugin/marketplace.json` catalog is also supported by Codex.
+Register or refresh it and install a named plugin through the normal CLI:
+
+```sh
+codex plugin marketplace add lvlup-sw/.github
+codex plugin marketplace upgrade lvlup-sw
+codex plugin add charter@lvlup-sw
+```
+
+The same catalog is available in the desktop plugin browser as `lvlup-sw`.
+Charter currently exposes a **Linux x64 installation preview**. Its self-contained
+native package lives in the private `lvlup-sw/charter` repository, pinned by full
+Git commit; authorized HTTPS Git access is required. No local source checkout,
+.NET SDK or Azure CLI is needed by the installed integration. Other OS/architecture
+targets and the cross-computer desktop pilot remain unverified.
+
+Installation grants no filesystem access. Import an operator-provided deployment
+profile and explicitly selected authoring folders using the installed package's
+setup command, then restart the integration and request account status/sign-in.
+See the [private distribution guide](https://github.com/lvlup-sw/charter/blob/924cd316d7c464e454821499c9bef9849fdf88e0/README.md)
+for package provenance, setup and remaining acceptance gates.
+
 ### For New Repos
 
 1. **Copy labels**: Copy `labels-base.yml` to `.github/labels.yml`
