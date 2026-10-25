@@ -111,7 +111,7 @@ targets and the cross-computer desktop pilot remain unverified.
 Installation grants no filesystem access. Import an operator-provided deployment
 profile and explicitly selected authoring folders using the installed package's
 setup command, then restart the integration and request account status/sign-in.
-See the [private distribution guide](https://github.com/lvlup-sw/charter/blob/9a09c5e94f30d47fd7ea1a734c32c143fa77d5a0/README.md)
+See the [private distribution guide](https://github.com/lvlup-sw/charter/blob/fcd6346939e460971db380bff89818c19c55d712/README.md)
 for package provenance, setup and remaining acceptance gates.
 
 ### For New Repos
