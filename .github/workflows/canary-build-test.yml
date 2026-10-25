@@ -67,6 +67,36 @@ jobs:
           token: ${{ secrets.PROJECT_TOKEN }}
           path: _fixture
 
+      # Restore/build the fixture through a solution filter that leaves out
+      # bifrost's samples/ projects. Why: advisory GHSA-23fw-v26w-5fgq
+      # (published 2026-09-08) flags Microsoft.Build.Tasks.Git 8.0.0, which
+      # bifrost pulls in through Microsoft.SourceLink.GitHub 8.0.0 — at this
+      # pin AND on bifrost main, so re-pinning cannot clear it. Only the two
+      # NativeAOT smoke samples set TreatWarningsAsErrors, so NuGet audit turns
+      # NU1902 into a restore error there and the canary died before any test
+      # ran. The samples are not test projects and no assertion depends on
+      # them. Every src/ project stays in the filter (the skipped test projects
+      # included), so the action restores and builds the same code as before,
+      # with NuGet audit still on. Remove this step and point solution-path back
+      # at Bifrost.sln once the pin moves to a bifrost commit without the
+      # vulnerable package.
+      - name: Filter fixture solution (exclude samples/)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, re
+          sln, slnf = "_fixture/src/Bifrost.sln", "_fixture/src/Bifrost.Canary.slnf"
+          with open(sln, encoding="utf-8-sig") as f:
+              projects = re.findall(
+                  r'^Project\("\{[^}]+\}"\) = "[^"]*", "([^"]+\.csproj)"', f.read(), re.M)
+          kept = [p for p in projects if not p.replace("\\", "/").startswith("../samples/")]
+          for p in projects:
+              print(("keep " if p in kept else "drop ") + p)
+          with open(slnf, "w", encoding="utf-8") as f:
+              json.dump({"solution": {"path": "Bifrost.sln", "projects": kept}}, f, indent=2)
+          PY
+
       # Run the PROPOSED action (local path) against the fixture. defaults
       # (dotnet-version=10.0.x, dotnet-quality=preview) match the workflow's, so
       # this is the same code path a default-input consumer hits.
@@ -74,7 +104,8 @@ jobs:
         id: build-test
         uses: ./actions/dotnet-build-test
         with:
-          solution-path: _fixture/src/Bifrost.sln
+          # Solution filter written by the step above (Bifrost.sln minus samples/).
+          solution-path: _fixture/src/Bifrost.Canary.slnf
           test-project-patterns: |
             _fixture/src/Bifrost.Tests*/*.csproj
           # Skip test projects the canary must not gate on:
