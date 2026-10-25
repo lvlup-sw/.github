@@ -1,0 +1,109 @@
+# =============================================================================
+# Canary: workflow-hygiene composite action
+# =============================================================================
+# Proves the actions/workflow-hygiene action on every PR that touches it:
+#
+#   (a) UNIT: mypy --strict plus the unittest suite, including every hostile
+#       edit against the consumer fixture and the fail-closed exit-2 cases.
+#   (b) LIVE: the action, through the real wiring (setup-uv, uv-managed Python,
+#       PYTHONPATH, pinned PyYAML), accepts the clean consumer fixture and
+#       refuses the same fixture with one timeout-minutes removed.
+#
+# This workflow follows the rules it ships: shared concurrency block and a
+# timeout on every job.
+# =============================================================================
+
+name: Canary - Workflow Hygiene Action
+
+on:
+  pull_request:
+    paths:
+      - 'actions/workflow-hygiene/**'
+      - '.github/workflows/canary-workflow-hygiene.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # (a) --------------------------------------------------------------------------
+  unit:
+    name: workflow-hygiene unit tests + mypy --strict
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: actions/workflow-hygiene
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv (pinned)
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: '0.9.26'
+          enable-cache: 'false'
+
+      - name: Type-check (mypy --strict)
+        run: >-
+          uv run --no-project --no-config --managed-python --python 3.12
+          --with 'mypy==2.3.1' --with 'types-PyYAML==6.0.12.20260906' --with 'PyYAML==6.0.2'
+          mypy --strict --no-incremental workflow_hygiene tests
+
+      - name: Unit and hostile tests
+        run: >-
+          uv run --no-project --no-config --managed-python --python 3.12 --with 'PyYAML==6.0.2'
+          python -m unittest discover --start-directory tests --top-level-directory . --verbose
+
+  # (b) --------------------------------------------------------------------------
+  live:
+    name: action accepts the clean consumer and refuses a seeded violation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Materialize the consumer fixtures
+        env:
+          FIXTURE_ROOT: ${{ runner.temp }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, sys
+          sys.path.insert(0, "actions/workflow-hygiene")
+          from tests.consumer import CI, FILES
+          seeded = dict(FILES)
+          assert "    timeout-minutes: 15\n" in seeded[CI]
+          seeded[CI] = seeded[CI].replace("    timeout-minutes: 15\n", "", 1)
+          for name, files in (("consumer-clean", FILES), ("consumer-seeded", seeded)):
+              for relative, content in files.items():
+                  target = pathlib.Path(os.environ["FIXTURE_ROOT"], name, relative)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_text(content, encoding="utf-8")
+          PY
+
+      - name: Check the clean consumer
+        uses: ./actions/workflow-hygiene
+        with:
+          root: ${{ runner.temp }}/consumer-clean
+
+      - name: Check the seeded consumer
+        id: seeded
+        continue-on-error: true
+        uses: ./actions/workflow-hygiene
+        with:
+          root: ${{ runner.temp }}/consumer-seeded
+
+      - name: Assert the seeded consumer was refused
+        env:
+          SEEDED: ${{ steps.seeded.outcome }}
+        run: |
+          if [[ "${SEEDED}" != "failure" ]]; then
+            echo "::error::workflow-hygiene canary: the seeded violation was not refused (outcome ${SEEDED})"
+            exit 1
+          fi
+          echo "workflow-hygiene canary: seeded violation refused"
