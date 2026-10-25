@@ -81,7 +81,7 @@ other form.
   # An inline job: a skipped job reports success under its own check name.
   integration-tests:
     needs: plan
-    if: ${{ always() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build_test != 'false') }}
+    if: ${{ !cancelled() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build_test != 'false') }}
 
   # A reusable-workflow caller: pass the decision down as `enabled`.
   build-test:
@@ -95,6 +95,11 @@ other form.
 
 Why these exact forms:
 
+- **Lead with `!cancelled()`, not `always()`.** GitHub starts an `always()` job
+  even after its run is cancelled. With `cancel-in-progress`, a superseded run then
+  starts every job that was still pending. `check` still accepts `always()` (since
+  `v1.9`), but new and edited workflows use `!cancelled()`. A gate job uses
+  `if: ${{ !cancelled() }}`.
 - **Only the exact string `'false'` skips.** If the planner fails, or reports no
   value for the lane (for example, a typo), the job runs.
 - **Never put the skip on the caller of a reusable workflow.** A skipped caller

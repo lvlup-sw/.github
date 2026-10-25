@@ -42,7 +42,7 @@ HOSTILE: tuple[tuple[str, str, str, str, str], ...] = (
      "enabled: ${{ fromJSON(needs.plan.outputs.lanes).lint == 'true' }}", "must pass exactly enabled:"),
     ("matrix job skipped without a gate", MANIFEST, '[gates.infra-gate]\nworkflow = "matrix.yml"\njobs = { validate = "infra" }\n', "",
      "cover it with a gate"),
-    ("gate not forced to run", MATRIX, "    if: always()\n", "    if: success()\n", "must run with if: always()"),
+    ("gate not forced to run", MATRIX, "    if: ${{ !cancelled() }}\n", "    if: success()\n", "a gate must run with if:"),
     ("gate does not need a covered job", MATRIX, "needs: [plan, validate]", "needs: [plan]", "must need exactly"),
     ("gate judges another gate", MATRIX, "gate: infra-gate", "gate: other-gate", "mode: verdict, gate: infra-gate"),
     ("gate swallows its failure", MATRIX, "  infra-gate:\n", "  infra-gate:\n    continue-on-error: true\n",
@@ -77,6 +77,14 @@ class CheckTests(unittest.TestCase):
         result = check(FILES)
         self.assertEqual(result.violations, [])
         self.assertGreaterEqual(result.assertions, 40)
+
+    def test_canonical_guard_is_cancellation_aware(self) -> None:
+        self.assertTrue(BUILD_SKIP.startswith("${{ !cancelled() && ("))
+
+    def test_legacy_always_guard_still_passes(self) -> None:
+        legacy = mutate(FILES, CI, f"if: {BUILD_SKIP}", "if: " + canonical_skip("plan", "build", "always()"))
+        legacy = mutate(legacy, MATRIX, "    if: ${{ !cancelled() }}\n", "    if: always()\n")
+        self.assertEqual(check(legacy).violations, [])
 
     def test_hostile_edits_are_refused(self) -> None:
         for description, path, old, new, fragment in HOSTILE:

@@ -54,7 +54,7 @@ jobs:
         uses: ./actions/ci-lanes
   build:
     needs: plan
-    if: ${{ always() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build != 'false') }}
+    if: ${{ !cancelled() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).build != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,7 +88,7 @@ jobs:
         uses: ./actions/ci-lanes
   validate:
     needs: plan
-    if: ${{ always() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).infra != 'false') }}
+    if: ${{ !cancelled() && (needs.plan.result != 'success' || fromJSON(needs.plan.outputs.lanes).infra != 'false') }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -97,7 +97,7 @@ jobs:
       - run: terraform -chdir=infra/modules/${{ matrix.dir }} validate
   infra-gate:
     needs: [plan, validate]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: ./actions/ci-lanes

@@ -58,8 +58,19 @@ def canonical_clause(planner: str, lane: str) -> str:
     return f"needs.{planner}.result != 'success' || fromJSON(needs.{planner}.outputs.lanes).{lane} != 'false'"
 
 
-def canonical_skip(planner: str, lane: str) -> str:
-    return "${{ always() && (" + canonical_clause(planner, lane) + ") }}"
+# The leading status guard of a targeted job and of a gate. `!cancelled()` is canonical: a
+# cancelled run (a superseded push under `cancel-in-progress`) starts none of its pending jobs.
+# `always()` still passes the check, but it starts every pending job of a cancelled run.
+CANONICAL_GUARD = "!cancelled()"
+LEGACY_GUARD = "always()"
+
+
+def canonical_skip(planner: str, lane: str, guard: str = CANONICAL_GUARD) -> str:
+    return "${{ " + guard + " && (" + canonical_clause(planner, lane) + ") }}"
+
+
+def accepted_skips(planner: str, lane: str) -> tuple[str, str]:
+    return (canonical_skip(planner, lane), canonical_skip(planner, lane, LEGACY_GUARD))
 
 
 def canonical_enable(planner: str, lane: str) -> str:
@@ -266,7 +277,7 @@ def _check_workflow(
             condition = job.get("if")
             expected = canonical_skip(planner, lane_key)
             result.require(
-                isinstance(condition, str) and condition.strip() == expected,
+                isinstance(condition, str) and condition.strip() in accepted_skips(planner, lane_key),
                 f"{label}: a targeted job must carry exactly if: {expected}",
             )
             strategy = job.get("strategy")
@@ -357,8 +368,9 @@ def _check_planner(result: CheckResult, label: str, job: Mapping[str, object]) -
 def _check_gate(result: CheckResult, label: str, job: Mapping[str, object], gate: Gate, planner: str) -> None:
     condition = job.get("if")
     result.require(
-        isinstance(condition, str) and condition.strip() in ("always()", "${{ always() }}"),
-        f"{label}: a gate must run with if: always()",
+        isinstance(condition, str)
+        and condition.strip() in (CANONICAL_GUARD, "${{ " + CANONICAL_GUARD + " }}", LEGACY_GUARD, "${{ " + LEGACY_GUARD + " }}"),
+        f"{label}: a gate must run with if: ${{{{ {CANONICAL_GUARD} }}}}",
     )
     expected_needs = sorted({planner, *gate.jobs})
     result.require(sorted(set(_needs(job))) == expected_needs, f"{label}: a gate must need exactly {expected_needs}")
