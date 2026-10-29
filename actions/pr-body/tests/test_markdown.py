@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from pr_body.markdown import comment_lines, headings, prose_lines, sections, word_count
+from pr_body.markdown import comment_lines, headings, prose_lines, sections, strip_comments, word_count
 
 
 class MarkdownTests(unittest.TestCase):
@@ -28,6 +28,14 @@ class MarkdownTests(unittest.TestCase):
     def test_comment_lines_ignore_inline_code_and_fences(self) -> None:
         text = "Use `<!--` in prose.\n```\n<!-- fenced -->\n```\nA <!-- real --> one.\n"
         self.assertEqual([line.number for line in comment_lines(prose_lines(text))], [5])
+
+    def test_an_inline_code_comment_opener_hides_nothing(self) -> None:
+        text = "## One\nUse `<!--` to open a hint.\n## Two\nMore words here.\n"
+        lines = prose_lines(text)
+        self.assertEqual([heading.text for heading in headings(lines)], ["One", "Two"])
+        self.assertEqual(word_count(lines), 8)
+        self.assertEqual([(section.heading.text, section.is_empty) for section in sections(lines)], [("One", False), ("Two", False)])
+        self.assertEqual(strip_comments("Use `<!--` here <!-- a hint --> now."), "Use `<!--` here  now.")
 
     def test_word_count_skips_headings_fences_and_comments(self) -> None:
         text = "## Heading words\n\nOne two, three.\n<!-- four\nfive -->\n```\nsix seven\n```\n- eight -- `nine`\n"

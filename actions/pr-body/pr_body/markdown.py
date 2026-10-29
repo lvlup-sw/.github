@@ -13,7 +13,9 @@ from dataclasses import dataclass
 
 _FENCE = re.compile(r"^ {0,3}(?P<token>`{3,}|~{3,})")
 _HEADING = re.compile(r"^ {0,3}(?P<level>#{1,6})[ \t]+(?P<text>.+?)[ \t]*#*[ \t]*$")
-_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+# One left-to-right scan: a code span is consumed first, so a "<!--" inside backticks never opens a
+# comment. Only the "comment" group is removed. A code span stays on one line, as in _INLINE_CODE.
+_CODE_OR_COMMENT = re.compile(r"(?P<code>(`+)(?:(?!\2)[^\n])+?\2)|(?P<comment><!--.*?(?:-->|\Z))", re.DOTALL)
 _INLINE_CODE = re.compile(r"(`+)(?:(?!\1).)+?\1")
 _WORD = re.compile(r"\S*[^\W_]\S*")
 
@@ -67,8 +69,18 @@ def prose_lines(markdown: str) -> list[Line]:
     return result
 
 
+def _drop_comments(text: str, *, keep_newlines: bool) -> str:
+    def replace(match: re.Match[str]) -> str:
+        comment = match.group("comment")
+        if comment is None:
+            return match.group(0)
+        return "\n" * comment.count("\n") if keep_newlines else ""
+
+    return _CODE_OR_COMMENT.sub(replace, text)
+
+
 def strip_comments(text: str) -> str:
-    return _COMMENT.sub("", text)
+    return _drop_comments(text, keep_newlines=False)
 
 
 def without_inline_code(text: str) -> str:
@@ -122,5 +134,5 @@ def visible(lines: list[Line]) -> list[Line]:
     if not lines:
         return []
     joined = "\n".join(line.text for line in lines)
-    cleaned = _COMMENT.sub(lambda match: "\n" * match.group(0).count("\n"), joined)
+    cleaned = _drop_comments(joined, keep_newlines=True)
     return [Line(line.number, text) for line, text in zip(lines, cleaned.split("\n"), strict=True)]
