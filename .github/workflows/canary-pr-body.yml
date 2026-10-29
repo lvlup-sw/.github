@@ -1,0 +1,125 @@
+# =============================================================================
+# Canary: pr-body composite action
+# =============================================================================
+# Proves the actions/pr-body action on every PR that touches it or the org
+# pull-request template:
+#
+#   (a) UNIT: mypy --strict plus the unittest suite, including every hostile
+#       edit against the consumer fixture and the fail-closed exit-2 cases.
+#   (b) LIVE: the action, through the real wiring (setup-uv, uv-managed Python,
+#       PYTHONPATH, the default org template), accepts the clean consumer body
+#       and refuses the same body with a generator footer. On a pull request it
+#       also checks the body of the pull request that runs it.
+#
+# This workflow follows the rules workflow-hygiene ships: shared concurrency
+# block and a timeout on every job.
+# =============================================================================
+
+name: Canary - PR Body Action
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    paths:
+      - 'actions/pr-body/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/workflows/canary-pr-body.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # (a) --------------------------------------------------------------------------
+  unit:
+    name: pr-body unit tests + mypy --strict
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: actions/pr-body
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup uv (pinned)
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.9.26'
+          enable-cache: 'false'
+
+      - name: Type-check (mypy --strict)
+        run: >-
+          uv run --no-project --no-config --managed-python --python 3.12
+          --with 'mypy==2.3.1' --with 'types-PyYAML==6.0.12.20260906' --with 'PyYAML==6.0.2'
+          mypy --strict --no-incremental pr_body tests
+
+      - name: Unit and hostile tests
+        run: >-
+          uv run --no-project --no-config --managed-python --python 3.12 --with 'PyYAML==6.0.2'
+          python -m unittest discover --start-directory tests --top-level-directory . --verbose
+
+  # (b) --------------------------------------------------------------------------
+  live:
+    name: action accepts the clean body and refuses a seeded footer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Materialize the consumer fixtures
+        env:
+          FIXTURE_ROOT: ${{ runner.temp }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+          sys.path.insert(0, "actions/pr-body")
+          from tests.consumer import CLEAN_BODY, FILES
+          footer = "\n\U0001f916 Generated with a tool\n"
+          root = pathlib.Path(os.environ["FIXTURE_ROOT"], "consumer")
+          for relative, content in FILES.items():
+              target = root / relative
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(content, encoding="utf-8")
+          for name, body in (("clean", CLEAN_BODY), ("seeded", CLEAN_BODY + footer)):
+              pull = {"body": body, "user": {"login": "canary"}, "base": {"sha": ""}, "head": {"sha": ""}}
+              pathlib.Path(os.environ["FIXTURE_ROOT"], f"{name}.json").write_text(json.dumps({"pull_request": pull}), encoding="utf-8")
+          PY
+
+      - name: Check the clean body
+        uses: ./actions/pr-body
+        with:
+          working-directory: ${{ runner.temp }}/consumer
+          same-as: .exarchos/pr-template.md
+          event-file: ${{ runner.temp }}/clean.json
+
+      - name: Check the seeded body
+        id: seeded
+        continue-on-error: true
+        uses: ./actions/pr-body
+        with:
+          working-directory: ${{ runner.temp }}/consumer
+          event-file: ${{ runner.temp }}/seeded.json
+
+      - name: Assert the seeded body was refused
+        env:
+          SEEDED: ${{ steps.seeded.outcome }}
+        run: |
+          if [[ "${SEEDED}" != "failure" ]]; then
+            echo "::error::pr-body canary: the seeded footer was not refused (outcome ${SEEDED})"
+            exit 1
+          fi
+          echo "pr-body canary: seeded footer refused"
+
+      - name: Check this pull request's own body
+        if: github.event_name == 'pull_request'
+        uses: ./actions/pr-body
