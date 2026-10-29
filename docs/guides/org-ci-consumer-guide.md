@@ -26,6 +26,7 @@ For the safe-bump and revert procedure, see
 | `terraform-deploy` (composite action) | `actions/terraform-deploy` | Compose Terraform `plan`/`apply`/`destroy` as steps **inside your own job** — e.g. apply → assert → destroy on one runner. |
 | `ci-lanes` (composite action, `v1.7`+) | `actions/ci-lanes` | Start only the jobs a PR can affect, without letting a skip hide a failure. See [Targeting jobs to changed paths](#targeting-jobs-to-changed-paths-v17). |
 | `workflow-hygiene` (composite action, `v1.9`+) | `actions/workflow-hygiene` | Fail a PR when a pull-request workflow never cancels superseded runs, or a job has no `timeout-minutes`. See [Workflow hygiene](#workflow-hygiene-v19). |
+| `pr-body` (composite action, next tag after `v1.10`) | `actions/pr-body` | Fail a PR whose body does not follow the template: the five org headings in order, no extra heading, no hints, no footer, a word cap. See [PR body](#pr-body). |
 
 **Workflow vs action:** use a **reusable workflow** when the org-standard job is
 all you need (one `uses:` line). Use the **composite actions** when you need to
@@ -213,6 +214,71 @@ that is not valid YAML, or an unreadable exemption file is exit 2, never a pass.
 from rule 1. Neither stands in for the other. An empty reason, a malformed key,
 and an exemption that matches no violation are violations: a stale exemption is
 cover for the next job that drifts.
+
+## PR body
+
+The org pull-request template, `.github/PULL_REQUEST_TEMPLATE.md` in this
+repository, has five headings: Background, Design Decisions, Changes,
+Verification Performed and Post-Merge Operations. GitHub offers it as the
+default body in every org repository that has no template of its own. The
+`write-pr` skill in `lvlup-dotfiles` writes bodies in that shape.
+
+The `pr-body` action reads the body from the event payload and fails when:
+
+- a template heading is missing, repeated or out of order, or the body carries
+  any other heading, at any level;
+- a template section is empty (write `None.`);
+- an HTML comment (a template hint) is left in the body;
+- a line starts with "Generated with" or "Made with";
+- the body holds more than `max-words` words (default 250);
+- a `same-as` file is not byte-identical to the template;
+- a changed path is under a `marker-paths` prefix and no body line starts with
+  `marker` and a reason.
+
+Headings, comments and words inside a fenced code block do not count.
+
+**Run it** in its own workflow, so an `edited` event re-runs it:
+
+```yaml
+name: PR Body Check
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  pr-body:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: lvlup-sw/.github/actions/pr-body@v1
+```
+
+Inputs:
+
+| Input | Default | Use |
+|---|---|---|
+| `template` | the org template | A repository-relative template, for a repo with its own heading set. |
+| `same-as` | none | Files, one per line, that must stay byte-identical to the template, for example `.exarchos/pr-template.md`. |
+| `max-words` | `250` | The word cap. `0` turns it off. |
+| `skip-authors` | `dependabot[bot]`, `renovate[bot]` | Authors the check skips. |
+| `marker`, `marker-paths` | none | Set both or neither. A change under a prefix needs a body line `<marker> <reason>`. This reads `git diff base...head`, so check out with `fetch-depth: 0`. |
+| `event-file` | this run's event | Another `pull_request` event JSON. The canary uses it. |
+| `working-directory` | `.` | The repository root. |
+
+Exit codes: 0 pass (or a skipped author), 1 violation, 2 INDETERMINATE. A
+template with no heading, an event with no pull request, or a failed
+`git diff` is exit 2, never a pass. The check reads the body from the event, so
+re-running an old job checks the old body. Edit the body to start a new run.
+
+To make the check block merges, add its check name to the branch ruleset, or
+run the step inside a job that your aggregate gate already requires.
 
 ## Pinning
 

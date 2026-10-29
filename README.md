@@ -9,6 +9,11 @@ Default issue templates applied to all repos without their own templates:
 - **Bug Report** - Report something that isn't working
 - **Feature Request** - Suggest a new feature
 
+### Pull Request Template (`.github/PULL_REQUEST_TEMPLATE.md`)
+The default pull-request body for every repo without its own template: Background, Design Decisions,
+Changes, Verification Performed, Post-Merge Operations. The `actions/pr-body` action checks bodies
+against it. See [the consumer guide](docs/guides/org-ci-consumer-guide.md#pr-body).
+
 ### Labels (`labels-base.yml`)
 Standard label definitions for consistent issue/PR organization:
 
