@@ -111,7 +111,7 @@ jobs:
       # (.github/dependabot.yml) keeps this pin current.
       - name: Build & test
         id: build-test
-        uses: lvlup-sw/.github/actions/dotnet-build-test@289c489837981df587525b7e6ea731a4b7e91939 # v1.6
+        uses: lvlup-sw/.github/actions/dotnet-build-test@b35d6be03b576723f3abfa0b4cb1fb59b960a3ec # v1.6
         with:
           solution-path: ${{ inputs.solution-path }}
           test-project-patterns: ${{ inputs.test-project-patterns }}

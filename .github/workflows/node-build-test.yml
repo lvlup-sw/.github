@@ -99,7 +99,7 @@ jobs:
       # action and (via shared-ref) the merge helper. Dependabot keeps it current.
       - name: Build & test
         id: build-test
-        uses: lvlup-sw/.github/actions/node-build-test@bf3bc29a2dbc0555dce3c9fc24b2c5898baf9c2e # v1.1
+        uses: lvlup-sw/.github/actions/node-build-test@b35d6be03b576723f3abfa0b4cb1fb59b960a3ec # v1.1
         with:
           working-directory: ${{ inputs.working-directory }}
           node-version: ${{ inputs.node-version }}
