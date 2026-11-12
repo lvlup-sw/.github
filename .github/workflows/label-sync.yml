@@ -26,20 +26,27 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Install js-yaml
+        run: npm install --no-save --prefix "$RUNNER_TEMP/label-sync-deps" js-yaml@4.1.0
+
       - name: Sync labels
         uses: actions/github-script@v9
+        env:
+          LABELS_FILE: ${{ inputs.labels-file }}
+          DELETE_UNLISTED: ${{ inputs.delete-unlisted }}
         with:
           script: |
             const fs = require('fs');
-            const yaml = require('js-yaml');
+            const yaml = require(process.env.RUNNER_TEMP + '/label-sync-deps/node_modules/js-yaml');
 
             // Read and parse labels.yml
-            const labelsFile = '${{ inputs.labels-file }}';
+            const labelsFile = process.env.LABELS_FILE;
             if (!fs.existsSync(labelsFile)) {
               console.log(`Labels file not found: ${labelsFile}`);
               return;
@@ -103,7 +110,7 @@ jobs:
             }
 
             // Optionally delete unlisted labels
-            if (${{ inputs.delete-unlisted }}) {
+            if (process.env.DELETE_UNLISTED === 'true') {
               for (const existing of existingLabels) {
                 if (!definedNames.has(existing.name)) {
                   console.log(`Deleting: ${existing.name}`);
