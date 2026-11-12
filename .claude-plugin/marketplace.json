@@ -57,10 +57,10 @@
         "source": "git-subdir",
         "url": "https://github.com/lvlup-sw/charter.git",
         "path": "./plugins/charter",
-        "sha": "fcd6346939e460971db380bff89818c19c55d712"
+        "sha": "79f687cee53961526b7b7e2f0dc0145285f5fbe0"
       },
       "description": "Linux x64 private desktop preview: publish HTML, Markdown and mixed decks to Charter, then retrieve source-bound review feedback and publish revisions. Requires access to the private Charter repository.",
-      "version": "0.1.1-preview.2",
+      "version": "0.1.1-preview.3",
       "author": {
         "name": "LevelUp Software"
       },
