@@ -92,6 +92,7 @@ Urgent keywords: `urgent`, `critical`, `blocker`, `p0`, `asap`, `emergency`
 - `agentic-engine`
 - `lvlup-claude`
 - `DataFerry`
+- `tower-autobattler`
 
 ## Usage
 
