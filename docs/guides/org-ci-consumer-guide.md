@@ -295,11 +295,12 @@ a SHA cannot). Do not mix SHA and `@v1` in the same repository.
 **Never pin `@main`** — it floats and defeats reproducibility.
 
 **Always pass `runner:`** on `build-and-test.yml` and `coverage-gate.yml`. The
-reusable default is `self-hosted`, which matches no runner registered in this
-org. Omitting it queues a required check forever. Pass `ubuntu-latest` unless
-the repo has a documented, registered runner label of its own. Do not rely on
-the default changing in a later release — a tag move must not silently retarget
-runners.
+reusable default is now `ubuntu-latest`, but releases before the self-hosted
+runner pool was retired default to `self-hosted`, which matches no runner in
+this org. A consumer pinned to one of those releases that omits `runner:`
+queues a required check forever. Pass `ubuntu-latest` unless the repo has a
+documented, registered runner label of its own. Do not rely on the default — a
+tag move must not silently retarget runners.
 
 ```yaml
 # Reusable workflow — pin the workflow file:
@@ -580,7 +581,7 @@ emits, so there is no TS-specific gate.
 ```yaml
 jobs:
   ci:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: lvlup-sw/.github/actions/node-build-test@v1.1

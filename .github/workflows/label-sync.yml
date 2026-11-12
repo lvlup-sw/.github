@@ -24,7 +24,7 @@ on:
 
 jobs:
   sync:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       issues: write
     steps:

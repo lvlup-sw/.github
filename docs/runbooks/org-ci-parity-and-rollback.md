@@ -96,7 +96,8 @@ differs; do not move the tag.
    (`build-and-test.yml` / `coverage-gate.yml` at default-ish inputs, required
    two-part checks).
 3. **basileus** — second .NET reusable consumer; historically inherited the
-   unrunnable `self-hosted` default. Confirm `runner:` is still passed.
+   unrunnable `self-hosted` default (releases before the runner pool was
+   retired). Confirm `runner:` is still passed.
 4. **bifrost** — org `canary-build-test` fixture and a composite-action
    consumer (`dotnet-build-test`, `coverage-gate.yml`). A behavior change here
    also breaks this repo's canary.
