@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "GitHub Actions pins are owned by Dependabot (.github/dependabot.yml) since the org CI re-architecture (T13/DR-6); Renovate's github-actions manager is disabled below so the two bots do not open competing PRs. Renovate keeps the runner Dockerfile image versions and lock-file maintenance.",
+  "description": "GitHub Actions pins are owned by Dependabot (.github/dependabot.yml) since the org CI re-architecture (T13/DR-6); Renovate's github-actions manager is disabled below so the two bots do not open competing PRs. Renovate keeps lock-file maintenance.",
   "extends": [
     "config:recommended"
   ],
@@ -22,28 +22,6 @@
     {
       "updateTypes": ["patch"],
       "automerge": true
-    }
-  ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "fileMatch": ["^infra/runners/Dockerfile$"],
-      "matchStrings": [
-        "ARG RUNNER_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
-      ],
-      "depNameTemplate": "actions/runner",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v(?<version>.*)$"
-    },
-    {
-      "customType": "regex",
-      "fileMatch": ["^infra/runners/Dockerfile$"],
-      "matchStrings": [
-        "ARG TRUFFLEHOG_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
-      ],
-      "depNameTemplate": "trufflesecurity/trufflehog",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v(?<version>.*)$"
     }
   ]
 }

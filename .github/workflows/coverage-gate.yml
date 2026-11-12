@@ -45,7 +45,7 @@ on:
         description: 'GitHub Actions runner label'
         required: false
         type: string
-        default: 'self-hosted'
+        default: 'ubuntu-latest'
       gate-mode:
         description: 'Gate mode: aggregate (default), per-project, or per-assembly. Pass-through to the coverage-gate action.'
         required: false

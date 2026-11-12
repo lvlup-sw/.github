@@ -44,8 +44,7 @@ jobs:
   smoke-actions:
     name: Invoke aot-smoke + benchmark-smoke (against bifrost)
     # GitHub-hosted Ubuntu (like bifrost's own CI runner): has sudo + apt for the
-    # NativeAOT clang toolchain, and dedicated resources. The org's self-hosted
-    # runners are unprivileged (no sudo/apt) so cannot install the toolchain.
+    # NativeAOT clang toolchain, and dedicated resources.
     runs-on: ubuntu-latest
     steps:
       # The composite actions are referenced locally (uses: ./actions/...), so
@@ -98,7 +97,7 @@ jobs:
   # ---------------------------------------------------------------------------
   no-op-by-omission:
     name: Caller that omits the smoke actions is unaffected
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout org repo
         uses: actions/checkout@v7
