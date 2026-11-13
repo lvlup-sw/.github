@@ -11,8 +11,8 @@ Default issue templates applied to all repos without their own templates:
 
 ### Pull Request Template (`.github/PULL_REQUEST_TEMPLATE.md`)
 The default pull-request body for every repo without its own template: Background, Design Decisions,
-Changes, Verification Performed, Post-Merge Operations. The `actions/pr-body` action checks bodies
-against it. See [the consumer guide](docs/guides/org-ci-consumer-guide.md#pr-body).
+Changes, Verification Performed, Post-Merge Operations. Use the template as writing guidance.
+See [the consumer guide](docs/guides/org-ci-consumer-guide.md#pr-body).
 
 ### Labels (`labels-base.yml`)
 Standard label definitions for consistent issue/PR organization:

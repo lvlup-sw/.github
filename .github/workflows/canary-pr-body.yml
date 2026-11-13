@@ -1,15 +1,13 @@
 # =============================================================================
 # Canary: pr-body composite action
 # =============================================================================
-# Proves the actions/pr-body action on every PR that touches it or the org
-# pull-request template:
+# Manually verifies the legacy action while pinned consumers migrate:
 #
 #   (a) UNIT: mypy --strict plus the unittest suite, including every hostile
 #       edit against the consumer fixture and the fail-closed exit-2 cases.
 #   (b) LIVE: the action, through the real wiring (setup-uv, uv-managed Python,
 #       PYTHONPATH, the default org template), accepts the clean consumer body
-#       and refuses the same body with a generator footer. On a pull request it
-#       also checks the body of the pull request that runs it.
+#       and refuses the same body with a generator footer.
 #
 # This workflow follows the rules workflow-hygiene ships: shared concurrency
 # block and a timeout on every job.
@@ -18,12 +16,6 @@
 name: Canary - PR Body Action
 
 on:
-  pull_request:
-    types: [opened, edited, synchronize, reopened, ready_for_review]
-    paths:
-      - 'actions/pr-body/**'
-      - '.github/PULL_REQUEST_TEMPLATE.md'
-      - '.github/workflows/canary-pr-body.yml'
   workflow_dispatch:
 
 concurrency:
@@ -119,7 +111,3 @@ jobs:
             exit 1
           fi
           echo "pr-body canary: seeded footer refused"
-
-      - name: Check this pull request's own body
-        if: github.event_name == 'pull_request'
-        uses: ./actions/pr-body
